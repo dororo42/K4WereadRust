@@ -3,6 +3,7 @@
 
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::sync::{mpsc, OnceLock};
 use std::time::{Duration, Instant};
 
 use rustls::StreamOwned;
@@ -53,10 +54,87 @@ fn is_timeout_err(e: &io::Error) -> bool {
         || e.raw_os_error() == Some(libc::EWOULDBLOCK)
 }
 
-/// getaddrinfo(AF_INET, SOCK_STREAM)。IPv4-only：K4 无 IPv6 栈，
-/// 与 weread ipv4_dns 补丁同语义（AAAA 记录不参与）。
-/// DNS 不提供端口：返回地址统一替换为目标端口。
-pub fn resolve_ipv4(host: &str, port: u16) -> Result<Vec<SocketAddr>, TransportError> {
+const DNS_QUEUE_CAPACITY: usize = 8;
+type DnsResult = Result<Vec<SocketAddr>, TransportError>;
+
+struct DnsJob {
+    host: String,
+    port: u16,
+    deadline: Instant,
+    reply: mpsc::SyncSender<DnsResult>,
+}
+
+struct DnsWorker {
+    queue: mpsc::SyncSender<DnsJob>,
+}
+
+impl DnsWorker {
+    fn start<F>(mut resolver: F) -> io::Result<Self>
+    where
+        F: FnMut(&str, u16) -> DnsResult + Send + 'static,
+    {
+        let (queue, jobs) = mpsc::sync_channel::<DnsJob>(DNS_QUEUE_CAPACITY);
+        std::thread::Builder::new()
+            .name("k4tls-dns".into())
+            .spawn(move || {
+                while let Ok(job) = jobs.recv() {
+                    if Instant::now() >= job.deadline {
+                        continue;
+                    }
+                    let result = resolver(&job.host, job.port);
+                    // One-slot reply: a timed-out caller can never block the worker.
+                    let _ = job.reply.try_send(result);
+                }
+            })?;
+        Ok(Self { queue })
+    }
+
+    fn resolve(&self, host: &str, port: u16, deadline: Instant) -> DnsResult {
+        remaining(deadline)?;
+        // Bound queued allocations as well as the number of pending requests.
+        if host.is_empty() || host.len() > 254 || host.as_bytes().contains(&0) {
+            return Err(code(codes::DNS_FAIL, "invalid DNS host"));
+        }
+        let (reply, response) = mpsc::sync_channel(1);
+        self.queue
+            .try_send(DnsJob {
+                host: host.into(),
+                port,
+                deadline,
+                reply,
+            })
+            .map_err(|e| match e {
+                mpsc::TrySendError::Full(_) => code(codes::DNS_FAIL, "DNS queue full"),
+                mpsc::TrySendError::Disconnected(_) => code(codes::DNS_FAIL, "DNS worker stopped"),
+            })?;
+        let result = response
+            .recv_timeout(remaining(deadline)?)
+            .map_err(|e| match e {
+                mpsc::RecvTimeoutError::Timeout => code(codes::TIMEOUT, "DNS deadline exceeded"),
+                mpsc::RecvTimeoutError::Disconnected => code(codes::DNS_FAIL, "DNS worker stopped"),
+            });
+        remaining(deadline)?;
+        result?
+    }
+}
+
+/// One process-level worker and a bounded queue. getaddrinfo itself cannot be
+/// cancelled: a stuck call occupies this worker, never the caller or a new thread.
+pub fn resolve_ipv4(host: &str, port: u16, deadline: Instant) -> DnsResult {
+    remaining(deadline)?;
+    if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
+        return Ok(vec![SocketAddr::from((ip, port))]);
+    }
+    static WORKER: OnceLock<Result<DnsWorker, String>> = OnceLock::new();
+    let worker = WORKER
+        .get_or_init(|| DnsWorker::start(system_resolve_ipv4).map_err(|e| e.to_string()))
+        .as_ref()
+        .map_err(|e| code(codes::DNS_FAIL, format!("DNS worker: {e}")))?;
+    worker.resolve(host, port, deadline)
+}
+
+/// getaddrinfo(AF_INET, SOCK_STREAM), with the requested port applied to each A record.
+fn system_resolve_ipv4(host: &str, port: u16) -> DnsResult {
     let c_host = std::ffi::CString::new(host).map_err(|_| code(codes::DNS_FAIL, "empty host"))?;
     let hints = libc::addrinfo {
         ai_flags: 0,
@@ -102,22 +180,80 @@ fn remaining(deadline: Instant) -> Result<Duration, TransportError> {
     }
 }
 
-fn block_budget(deadline: Instant, block: Duration) -> Duration {
-    remaining(deadline).map(|r| r.min(block)).unwrap_or(block)
+fn block_budget(deadline: Instant, block: Duration) -> Result<Duration, TransportError> {
+    let budget = remaining(deadline)?.min(block);
+    if budget.is_zero() {
+        return Err(code(codes::TIMEOUT, "zero block budget"));
+    }
+    Ok(budget)
+}
+
+/// Guard socket operations: complete_io can perform arbitrarily many I/Os
+/// inside a single handshake or plaintext read.
+struct DeadlineStream {
+    socket: TcpStream,
+    deadline: Instant,
+    block: Duration,
+}
+
+impl DeadlineStream {
+    fn budget(&self) -> io::Result<Duration> {
+        block_budget(self.deadline, self.block)
+            .map_err(|e| io::Error::new(io::ErrorKind::TimedOut, e.detail().to_string()))
+    }
+}
+
+impl Read for DeadlineStream {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        self.socket.set_read_timeout(Some(self.budget()?))?;
+        let result = self.socket.read(out);
+        self.budget()?;
+        result
+    }
+}
+
+impl Write for DeadlineStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.socket.set_write_timeout(Some(self.budget()?))?;
+        let result = self.socket.write(buf);
+        self.budget()?;
+        result
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.socket.set_write_timeout(Some(self.budget()?))?;
+        let result = self.socket.flush();
+        self.budget()?;
+        result
+    }
+}
+
+fn io_error(e: io::Error, fallback: i32, phase: &str) -> TransportError {
+    code(
+        if is_timeout_err(&e) {
+            codes::TIMEOUT
+        } else {
+            fallback
+        },
+        format!("{phase}: {e}"),
+    )
 }
 
 pub fn perform(req: Request) -> Result<Response, TransportError> {
+    let started = Instant::now();
     let target = parse_https_url(req.url)
         .ok_or_else(|| code(codes::DNS_FAIL, format!("not an https url: {:?}", req.url)))?;
-    let started = Instant::now();
-    let deadline = started + req.budgets.total_deadline;
+    let deadline = started
+        .checked_add(req.budgets.total_deadline)
+        .ok_or_else(|| code(codes::TIMEOUT, "invalid total deadline"))?;
+    remaining(deadline)?;
     let block = req.budgets.block_timeout;
 
-    let addrs = resolve_ipv4(&target.host, target.port)?;
+    let addrs = resolve_ipv4(&target.host, target.port, deadline)?;
     let mut last_err: Option<TransportError> = None;
     let mut sock = None;
     for addr in &addrs {
-        match TcpStream::connect_timeout(addr, block_budget(deadline, block)) {
+        match TcpStream::connect_timeout(addr, block_budget(deadline, block)?) {
             Ok(s) => {
                 sock = Some(s);
                 break;
@@ -137,11 +273,7 @@ pub fn perform(req: Request) -> Result<Response, TransportError> {
             .take()
             .unwrap_or_else(|| code(codes::CONNECT_FAIL, "no addresses"))
     })?;
-    let budget = block_budget(deadline, block);
-    sock.set_read_timeout(Some(budget))
-        .map_err(|e| code(codes::CONNECT_FAIL, e.to_string()))?;
-    sock.set_write_timeout(Some(budget))
-        .map_err(|e| code(codes::CONNECT_FAIL, e.to_string()))?;
+    remaining(deadline)?;
     sock.set_nodelay(true).ok();
 
     let server_name = tls::server_name(&target.host)
@@ -151,28 +283,25 @@ pub fn perform(req: Request) -> Result<Response, TransportError> {
     })?;
     let conn = rustls::ClientConnection::new(std::sync::Arc::new(config), server_name)
         .map_err(|e| code(codes::HANDSHAKE_FAIL, format!("conn: {e}")))?;
-    let mut stream = StreamOwned::new(conn, sock);
+    let socket = DeadlineStream {
+        socket: sock,
+        deadline,
+        block,
+    };
+    let mut stream = StreamOwned::new(conn, socket);
 
-    // 握手（StreamOwned 惰性；显式 complete_io 让超时归类 HANDSHAKE/TIMEOUT）
-    loop {
-        match stream.conn.complete_io(&mut stream.sock) {
-            Ok(_) if stream.conn.is_handshaking() => {
-                remaining(deadline)?;
-                continue;
-            }
-            Ok(_) => break,
-            Err(e) => {
-                let c = if is_timeout_err(&e) {
-                    codes::TIMEOUT
-                } else if is_cert_error(&e) {
-                    codes::CERT_VERIFY_FAIL
-                } else {
-                    codes::HANDSHAKE_FAIL
-                };
-                return Err(code(c, format!("handshake: {e}")));
-            }
+    while stream.conn.is_handshaking() {
+        remaining(deadline)?;
+        if let Err(e) = stream.conn.complete_io(&mut stream.sock) {
+            let fallback = if is_cert_error(&e) {
+                codes::CERT_VERIFY_FAIL
+            } else {
+                codes::HANDSHAKE_FAIL
+            };
+            return Err(io_error(e, fallback, "handshake"));
         }
     }
+    remaining(deadline)?;
 
     let host_header = if target.port == 443 {
         target.host.clone()
@@ -187,102 +316,163 @@ pub fn perform(req: Request) -> Result<Response, TransportError> {
         req.body,
     )
     .map_err(|m| code(codes::WRITE_FAIL, m))?;
-    write_all_tls(&mut stream, &wire, deadline, block)?;
-
-    let resp = read_all_tls(&mut stream, req.max_response_bytes, deadline, block).map_err(|m| {
-        if m.contains("body too large") {
-            code(codes::TOO_LARGE, m)
-        } else if m.contains("read: ") || m.contains("connection closed") {
-            // 底层超时以 io 错误上浮时同样落 TIMEOUT
-            if m.contains("timed out") || m.contains("WouldBlock") || m.contains("would block") {
-                code(codes::TIMEOUT, m)
-            } else {
-                code(codes::READ_FAIL, m)
-            }
-        } else {
-            code(codes::READ_FAIL, m)
-        }
-    })?;
-    Ok(resp)
+    write_all_tls(&mut stream, &wire)?;
+    let result = http::read_response(&mut stream, req.method, req.max_response_bytes);
+    remaining(deadline)?;
+    result.map_err(|e| match e {
+        http::ReadError::Io(e) => io_error(e, codes::READ_FAIL, "read"),
+        http::ReadError::TooLarge(_) => code(codes::TOO_LARGE, e.to_string()),
+        http::ReadError::Invalid(_) => code(codes::READ_FAIL, e.to_string()),
+    })
 }
 
 fn is_cert_error(e: &io::Error) -> bool {
-    let s = e.to_string();
-    s.contains("certificate")
-        || s.contains("unknown CA")
-        || s.contains("AlertReceived(Description(CertificateUnknown")
-        || s.to_string().contains("InvalidCertificate")
+    matches!(
+        e.get_ref()
+            .and_then(|inner| inner.downcast_ref::<rustls::Error>()),
+        Some(rustls::Error::InvalidCertificate(_) | rustls::Error::NoCertificatesPresented)
+    )
 }
 
 fn write_all_tls(
-    stream: &mut StreamOwned<rustls::ClientConnection, TcpStream>,
+    stream: &mut StreamOwned<rustls::ClientConnection, DeadlineStream>,
     buf: &[u8],
-    deadline: Instant,
-    block: Duration,
 ) -> Result<(), TransportError> {
-    let mut off = 0;
-    while off < buf.len() {
-        remaining(deadline)?;
-        let budget = block_budget(deadline, block);
-        stream
-            .sock
-            .set_write_timeout(Some(budget))
-            .map_err(|e| code(codes::WRITE_FAIL, e.to_string()))?;
-        match stream.write(&buf[off..]) {
-            Ok(0) => return Err(code(codes::WRITE_FAIL, "zero write")),
-            Ok(n) => off += n,
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-            Err(e) if is_timeout_err(&e) => {
-                return Err(code(codes::TIMEOUT, format!("write: {e}")))
-            }
-            Err(e) => return Err(code(codes::WRITE_FAIL, format!("write: {e}"))),
-        }
-    }
-    // 刷出 TLS 记录
-    loop {
-        remaining(deadline)?;
-        match stream.conn.complete_io(&mut stream.sock) {
-            Ok(_) if stream.conn.wants_write() => continue,
-            Ok(_) => break,
-            Err(e) if is_timeout_err(&e) => {
-                return Err(code(codes::TIMEOUT, format!("flush: {e}")))
-            }
-            Err(e) => return Err(code(codes::WRITE_FAIL, format!("flush: {e}"))),
-        }
-    }
+    remaining(stream.sock.deadline)?;
+    stream
+        .write_all(buf)
+        .map_err(|e| io_error(e, codes::WRITE_FAIL, "write"))?;
+    remaining(stream.sock.deadline)?;
+    stream
+        .flush()
+        .map_err(|e| io_error(e, codes::WRITE_FAIL, "flush"))?;
+    remaining(stream.sock.deadline)?;
     Ok(())
 }
 
-fn read_all_tls(
-    stream: &mut StreamOwned<rustls::ClientConnection, TcpStream>,
-    max_bytes: usize,
-    deadline: Instant,
-    block: Duration,
-) -> Result<Response, String> {
-    struct Guard<'a> {
-        stream: &'a mut StreamOwned<rustls::ClientConnection, TcpStream>,
-        deadline: Instant,
-        block: Duration,
-    }
-    impl Read for Guard<'_> {
-        fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-            if Instant::now() >= self.deadline {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "total deadline exceeded",
-                ));
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    #[test]
+    fn regression_dns_timeout_keeps_one_worker_and_bounds_queue() {
+        let (release, gate) = mpsc::channel();
+        let (events, observed) = mpsc::channel();
+        let worker = DnsWorker::start(move |host, port| {
+            events
+                .send((host.to_string(), std::thread::current().id()))
+                .unwrap();
+            if host == "slow.test" {
+                gate.recv_timeout(Duration::from_secs(2)).unwrap();
             }
-            let budget = self
-                .block
-                .min(self.deadline.saturating_duration_since(Instant::now()));
-            let _ = self.stream.sock.set_read_timeout(Some(budget));
-            self.stream.read(out)
+            Ok(vec![SocketAddr::from(([127, 0, 0, 1], port))])
+        })
+        .unwrap();
+        let started = Instant::now();
+        let err = worker
+            .resolve("slow.test", 443, started + Duration::from_millis(30))
+            .unwrap_err();
+        assert_eq!(err.code(), codes::TIMEOUT);
+        assert!(started.elapsed() < Duration::from_millis(200));
+        assert_eq!(
+            observed.recv_timeout(Duration::from_secs(1)).unwrap().0,
+            "slow.test"
+        );
+        for _ in 0..DNS_QUEUE_CAPACITY {
+            let err = worker
+                .resolve(
+                    "expired.test",
+                    443,
+                    Instant::now() + Duration::from_millis(2),
+                )
+                .unwrap_err();
+            assert_eq!(err.code(), codes::TIMEOUT);
+        }
+        // The blocked resolver must not cause a new worker, or an unbounded queue.
+        let started = Instant::now();
+        let err = worker
+            .resolve("full.test", 443, started + Duration::from_secs(1))
+            .unwrap_err();
+        assert_eq!(err.code(), codes::DNS_FAIL);
+        assert!(started.elapsed() < Duration::from_millis(200));
+        drop(worker);
+        release.send(()).unwrap();
+        // Disconnect proves the worker drained its queue and exited without resolving
+        // any expired job. A leaked/new worker or an executed job fails this assertion.
+        assert!(matches!(
+            observed.recv_timeout(Duration::from_secs(1)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn regression_dns_worker_reused_and_expired_requests_not_submitted() {
+        let (events, observed) = mpsc::channel();
+        let worker = DnsWorker::start(move |_, port| {
+            events.send(std::thread::current().id()).unwrap();
+            Ok(vec![SocketAddr::from(([127, 0, 0, 1], port))])
+        })
+        .unwrap();
+        let err = worker
+            .resolve("expired.test", 443, Instant::now())
+            .unwrap_err();
+        assert_eq!(err.code(), codes::TIMEOUT);
+        assert!(observed.try_recv().is_err());
+        let mut ids = Vec::new();
+        for _ in 0..10 {
+            let result = worker
+                .resolve("fast.test", 8443, Instant::now() + Duration::from_secs(1))
+                .unwrap();
+            assert_eq!(result, [SocketAddr::from(([127, 0, 0, 1], 8443))]);
+            ids.push(observed.recv_timeout(Duration::from_secs(1)).unwrap());
+        }
+        assert!(ids.iter().all(|id| *id == ids[0]));
+    }
+
+    #[test]
+    fn expired_socket_reads_writes_and_flushes_never_restart_block_budget() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut peer, _) = listener.accept().unwrap();
+        let mut socket = DeadlineStream {
+            socket: client,
+            deadline: Instant::now(),
+            block: Duration::from_secs(10),
+        };
+        assert_eq!(
+            socket.read(&mut [0]).unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
+        assert_eq!(
+            socket.write(b"must not be sent").unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
+        assert_eq!(socket.flush().unwrap_err().kind(), io::ErrorKind::TimedOut);
+        peer.set_nonblocking(true).unwrap();
+        assert_eq!(
+            peer.read(&mut [0]).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn expired_block_budget_and_localized_errors_are_timeouts() {
+        assert_eq!(
+            block_budget(Instant::now(), Duration::from_secs(10))
+                .unwrap_err()
+                .code(),
+            codes::TIMEOUT
+        );
+        for error in [
+            io::Error::from_raw_os_error(libc::EAGAIN),
+            io::Error::new(io::ErrorKind::TimedOut, "期限已到"),
+            io::Error::new(io::ErrorKind::WouldBlock, "暂不可用"),
+        ] {
+            assert_eq!(
+                io_error(error, codes::READ_FAIL, "read").code(),
+                codes::TIMEOUT
+            );
         }
     }
-    let mut guard = Guard {
-        stream,
-        deadline,
-        block,
-    };
-    http::read_response(&mut guard, max_bytes)
 }

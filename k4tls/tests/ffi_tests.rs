@@ -165,6 +165,103 @@ fn transport_error_via_ffi() {
 }
 
 #[test]
+fn regression_nul_header_rejected_before_ffi_allocation() {
+    let server = TestServer::spawn(
+        "HTTP/1.1 200 OK\r\nX-Test: before\0after\r\nContent-Length: 0\r\n\r\n".into(),
+        false,
+    );
+    let url = cstring(&format!("https://127.0.0.1:{}/", server.addr.port()));
+    let method = cstring("GET");
+    let req = K4TlsRequest {
+        url: url.as_ptr(),
+        method: method.as_ptr(),
+        headers: std::ptr::null(),
+        nheaders: 0,
+        body: std::ptr::null(),
+        body_len: 0,
+        block_timeout_ms: 1000,
+        total_timeout_ms: 3000,
+        max_response_bytes: 4096,
+        trust_pem: server.root_pem.as_ptr(),
+        trust_pem_len: server.root_pem.len(),
+    };
+    let (rc, mut resp) = call(&req);
+    assert_eq!(rc, 0);
+    // Assert before free: the buggy implementation must not reach its mismatched deallocation.
+    assert_eq!(resp.status, k4tls::codes::READ_FAIL, "{}", err_text(&resp));
+    assert!(resp.headers_blob.is_null());
+    assert!(resp.body.is_null());
+    unsafe { k4tls::k4tls_free_response(&mut resp) };
+}
+
+#[test]
+fn response_framing_limits_and_timeout_codes_survive_ffi() {
+    for (method, wire, expected) in [
+        (
+            "GET",
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nab\r\n0\r\n\r\n",
+            k4tls::codes::TOO_LARGE,
+        ),
+        ("GET", "HTTP/1.0 200 OK\r\n\r\nab", k4tls::codes::TOO_LARGE),
+        (
+            "HEAD",
+            "HTTP/1.1 200 OK\r\nContent-Length: 999\r\n\r\n",
+            200,
+        ),
+        ("GET", "HTTP/1.1 204 No Content\r\n\r\n", 204),
+        (
+            "GET",
+            "HTTP/1.1 304 Not Modified\r\nContent-Length: 999\r\n\r\n",
+            304,
+        ),
+        (
+            "GET",
+            "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+            200,
+        ),
+        (
+            "GET",
+            "HTTP/1.1 101 Switching Protocols\r\n\r\n",
+            k4tls::codes::READ_FAIL,
+        ),
+        (
+            "GET",
+            "HTTP/1.1 200 OK\r\nContent-Length: invalid\r\n\r\n",
+            k4tls::codes::READ_FAIL,
+        ),
+        (
+            "GET",
+            "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n",
+            k4tls::codes::TIMEOUT,
+        ),
+    ] {
+        let server = TestServer::stalled(wire);
+        let url = cstring(&format!("https://127.0.0.1:{}/", server.addr.port()));
+        let method = cstring(method);
+        let req = K4TlsRequest {
+            url: url.as_ptr(),
+            method: method.as_ptr(),
+            headers: std::ptr::null(),
+            nheaders: 0,
+            body: std::ptr::null(),
+            body_len: 0,
+            block_timeout_ms: 100,
+            total_timeout_ms: 800,
+            max_response_bytes: 1,
+            trust_pem: server.root_pem.as_ptr(),
+            trust_pem_len: server.root_pem.len(),
+        };
+        let (rc, mut resp) = call(&req);
+        assert_eq!(rc, 0);
+        assert_eq!(resp.status, expected, "{wire:?}: {}", err_text(&resp));
+        assert_eq!(resp.body_len, 0);
+        unsafe { k4tls::k4tls_free_response(&mut resp) };
+        assert!(resp.body.is_null());
+        assert!(resp.headers_blob.is_null());
+    }
+}
+
+#[test]
 fn free_response_is_noop_safe() {
     let mut resp: K4TlsResponse = unsafe { std::mem::zeroed() };
     unsafe { k4tls::k4tls_free_response(&mut resp) };

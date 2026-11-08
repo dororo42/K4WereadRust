@@ -4,6 +4,9 @@
 //! 重定向/cookie/超时策略归 Lua 侧（client.lua），与 socketutil 语义对齐：
 //! block_timeout = 单 socket 操作预算；total_timeout = 整请求硬期限。
 
+#[cfg(any(test, all(target_arch = "arm", target_os = "linux", target_env = "gnu")))]
+mod auxv;
+
 pub mod codes;
 pub mod http;
 pub mod tls;

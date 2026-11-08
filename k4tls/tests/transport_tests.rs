@@ -168,6 +168,25 @@ fn untrusted_cert_maps_cert_verify_fail() {
 }
 
 #[test]
+fn hostname_resolution_uses_ipv4_and_preserves_port() {
+    let server = TestServer::spawn(
+        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".into(),
+        false,
+    );
+    let resp = perform(Request {
+        url: &format!("https://localhost:{}/", server.addr.port()),
+        method: "GET",
+        headers: vec![],
+        body: None,
+        budgets: budgets(),
+        max_response_bytes: 2,
+        trust_pem: Some(server.root_pem.as_bytes()),
+    })
+    .unwrap();
+    assert_eq!(resp.body, b"ok");
+}
+
+#[test]
 fn non_https_url_rejected() {
     let err = perform(Request {
         url: "http://weread.qq.com/",
@@ -180,6 +199,101 @@ fn non_https_url_rejected() {
     })
     .expect_err("must reject");
     assert_eq!(err.code(), k4tls::codes::DNS_FAIL);
+}
+
+fn limited_request(
+    server: &TestServer,
+    method: &str,
+    cap: usize,
+    budgets: Budgets,
+) -> Result<k4tls::http::Response, k4tls::transport::TransportError> {
+    perform(Request {
+        url: &format!("https://127.0.0.1:{}/", server.addr.port()),
+        method,
+        headers: vec![],
+        body: None,
+        budgets,
+        max_response_bytes: cap,
+        trust_pem: Some(server.root_pem.as_bytes()),
+    })
+}
+
+#[test]
+fn regression_slow_drip_handshake_obeys_total_deadline() {
+    let server = TestServer::slow_handshake();
+    let start = std::time::Instant::now();
+    let err = limited_request(
+        &server,
+        "GET",
+        1024,
+        Budgets {
+            block_timeout: Duration::from_millis(100),
+            total_deadline: Duration::from_millis(80),
+        },
+    )
+    .unwrap_err();
+    let elapsed = start.elapsed();
+    assert_eq!(err.code(), k4tls::codes::TIMEOUT, "{err:?}, {elapsed:?}");
+    assert!(elapsed < Duration::from_millis(250), "{elapsed:?}");
+}
+
+#[test]
+fn regression_stalled_body_read_maps_timeout_without_string_matching() {
+    let server = TestServer::stalled("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\na");
+    let start = std::time::Instant::now();
+    let err = limited_request(
+        &server,
+        "GET",
+        1024,
+        Budgets {
+            block_timeout: Duration::from_millis(100),
+            total_deadline: Duration::from_millis(800),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(err.code(), k4tls::codes::TIMEOUT, "{err:?}");
+    assert!(start.elapsed() < Duration::from_millis(500));
+}
+
+#[test]
+fn regression_oversized_chunk_declaration_does_not_wait_for_payload() {
+    let server =
+        TestServer::stalled("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n10000000\r\n");
+    let err = limited_request(
+        &server,
+        "GET",
+        1,
+        Budgets {
+            block_timeout: Duration::from_millis(100),
+            total_deadline: Duration::from_millis(800),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(err.code(), k4tls::codes::TOO_LARGE, "{err:?}");
+}
+
+#[test]
+fn regression_same_packet_caps_map_too_large() {
+    for raw in [
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nab\r\n0\r\n\r\n",
+        "HTTP/1.0 200 OK\r\n\r\nab",
+    ] {
+        let server = TestServer::spawn(raw.into(), false);
+        let err = limited_request(&server, "GET", 1, budgets()).unwrap_err();
+        assert_eq!(err.code(), k4tls::codes::TOO_LARGE, "{err:?}");
+    }
+}
+
+#[test]
+fn regression_head_and_bodyless_statuses_do_not_read_body() {
+    for (method, status) in [("HEAD", 200), ("GET", 204), ("GET", 304)] {
+        let server = TestServer::stalled(&format!(
+            "HTTP/1.1 {status} OK\r\nContent-Length: 999\r\n\r\n"
+        ));
+        let resp = limited_request(&server, method, 1, budgets()).unwrap();
+        assert_eq!(resp.status, status);
+        assert!(resp.body.is_empty());
+    }
 }
 
 #[test]

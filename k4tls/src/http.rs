@@ -2,7 +2,51 @@
 //! 语义对齐 LuaSocket socket.http：每请求新建连接、Connection: close、
 //! 不注入 User-Agent、不自动跟随重定向（3xx 原样返回给 Lua 侧处理）。
 
-use std::io::{Read, Write};
+use std::io::{self, BufRead, BufReader, Read};
+
+#[derive(Debug)]
+pub enum ReadError {
+    Io(io::Error),
+    Invalid(String),
+    TooLarge(&'static str),
+}
+
+impl std::fmt::Display for ReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "read: {e}"),
+            Self::Invalid(message) => f.write_str(message),
+            Self::TooLarge(part) => write!(f, "{part} too large"),
+        }
+    }
+}
+
+impl std::error::Error for ReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<io::Error> for ReadError {
+    fn from(e: io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl From<String> for ReadError {
+    fn from(message: String) -> Self {
+        Self::Invalid(message)
+    }
+}
+
+impl From<&str> for ReadError {
+    fn from(message: &str) -> Self {
+        Self::Invalid(message.to_string())
+    }
+}
 
 pub const MAX_HEADER_BLOCK: usize = 64 * 1024;
 
@@ -67,88 +111,64 @@ pub fn serialize_request(
     Ok(buf)
 }
 
-/// 从 TLS 流读响应。`max_bytes` 上限约束 header 块与 body 总量。
-pub fn read_response<S: Read>(stream: &mut S, max_bytes: usize) -> Result<Response, String> {
-    let mut head = Vec::with_capacity(1024);
-    let mut chunk = [0u8; 2048];
-    let head_end;
-    loop {
-        if let Some(pos) = find_head_end(&head) {
-            head_end = pos;
-            break;
-        }
-        if head.len() > MAX_HEADER_BLOCK {
-            return Err("header block too large".to_string());
-        }
-        let n = stream.read(&mut chunk).map_err(|e| format!("read: {e}"))?;
-        if n == 0 {
-            return Err("connection closed before response head".to_string());
-        }
-        head.extend_from_slice(&chunk[..n]);
-    }
-    let (status, header_lines) = parse_head(&head[..head_end])?;
-    let rest = &head[head_end + 4..];
-    let mut body = Vec::new();
-    let te_chunked = header_lines.iter().any(|l| {
-        l.split_once(':').is_some_and(|(n, v)| {
-            n.trim().eq_ignore_ascii_case("transfer-encoding")
-                && v.to_ascii_lowercase().contains("chunked")
-        })
-    });
-    let content_length = header_lines.iter().find_map(|l| {
-        let (n, v) = l.split_once(':')?;
-        if n.trim().eq_ignore_ascii_case("content-length") {
-            v.trim().parse::<usize>().ok()
-        } else {
-            None
-        }
-    });
-
-    if te_chunked {
-        let mut leftover = rest.to_vec();
+/// `max_bytes` caps the decoded body; headers (including interim responses) and
+/// chunk metadata/trailers each have an independent MAX_HEADER_BLOCK budget.
+pub fn read_response<S: Read>(
+    stream: &mut S,
+    method: &str,
+    max_bytes: usize,
+) -> Result<Response, ReadError> {
+    // Fixed read-ahead, never a buffer sized by an untrusted chunk declaration.
+    let mut reader = BufReader::with_capacity(2048, stream);
+    let mut head_budget = MAX_HEADER_BLOCK;
+    let (status, header_lines, framing) = loop {
+        let mut head = Vec::new();
         loop {
-            match decode_chunk_step(&mut body, &mut leftover)? {
-                ChunkState::Done => break,
-                ChunkState::NeedMore => {
-                    let n = stream.read(&mut chunk).map_err(|e| format!("read: {e}"))?;
-                    if n == 0 {
-                        return Err("connection closed mid-chunk".to_string());
-                    }
-                    leftover.extend_from_slice(&chunk[..n]);
-                }
-            }
-            if body.len() > max_bytes {
-                return Err("body too large (chunked)".to_string());
-            }
-        }
-    } else if let Some(len) = content_length {
-        if len > max_bytes {
-            return Err("body too large (content-length)".to_string());
-        }
-        body.extend_from_slice(rest);
-        while body.len() < len {
-            let want = (len - body.len()).min(chunk.len());
-            let n = stream
-                .read(&mut chunk[..want])
-                .map_err(|e| format!("read: {e}"))?;
-            if n == 0 {
-                return Err("connection closed mid-body".to_string());
-            }
-            body.extend_from_slice(&chunk[..n]);
-        }
-        if body.len() > len {
-            body.truncate(len);
-        }
-    } else {
-        body.extend_from_slice(rest);
-        loop {
-            let n = stream.read(&mut chunk).map_err(|e| format!("read: {e}"))?;
-            if n == 0 {
+            let line = read_line(
+                &mut reader,
+                &mut head_budget,
+                MAX_HEADER_BLOCK,
+                "header block",
+            )?;
+            if line.is_empty() {
                 break;
             }
-            body.extend_from_slice(&chunk[..n]);
-            if body.len() > max_bytes {
-                return Err("body too large (eof-terminated)".to_string());
+            if !head.is_empty() {
+                head.extend_from_slice(b"\r\n");
+            }
+            head.extend_from_slice(&line);
+        }
+        let (status, headers) = parse_head(&head)?;
+        let framing = parse_framing(&headers)?;
+        if status == 101 {
+            return Err("HTTP protocol switching is unsupported".into());
+        }
+        if status >= 200 {
+            break (status, headers, framing);
+        }
+    };
+    let mut body = Vec::new();
+    if method == "HEAD" || matches!(status, 204 | 304) {
+        // Content-Length describes the representation, not a body on this response.
+    } else {
+        match framing {
+            Framing::Chunked => read_chunked(&mut reader, &mut body, max_bytes)?,
+            Framing::Length(len) => read_body(&mut reader, &mut body, len, max_bytes)?,
+            Framing::Eof => {
+                let mut buf = [0; 2048];
+                loop {
+                    let available = max_bytes
+                        .checked_sub(body.len())
+                        .ok_or(ReadError::TooLarge("body"))?;
+                    // At the cap, a one-byte probe distinguishes EOF from overflow.
+                    let want = available.min(buf.len()).max(1);
+                    let n = read_retry(&mut reader, &mut buf[..want])?;
+                    if n == 0 {
+                        break;
+                    }
+                    ensure_body_room(body.len(), n, max_bytes)?;
+                    body.extend_from_slice(&buf[..n]);
+                }
             }
         }
     }
@@ -159,81 +179,223 @@ pub fn read_response<S: Read>(stream: &mut S, max_bytes: usize) -> Result<Respon
     })
 }
 
-fn find_head_end(buf: &[u8]) -> Option<usize> {
-    buf.windows(4).position(|w| w == b"\r\n\r\n")
+fn read_retry<R: Read>(reader: &mut R, out: &mut [u8]) -> io::Result<usize> {
+    loop {
+        match reader.read(out) {
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            result => return result,
+        }
+    }
 }
 
-fn parse_head(head: &[u8]) -> Result<(u16, Vec<String>), String> {
-    let text = std::str::from_utf8(head).map_err(|_| "head not utf-8".to_string())?;
+/// Both per-line and aggregate limits include CRLF, checked before growing a buffer.
+fn read_line<R: BufRead>(
+    reader: &mut R,
+    budget: &mut usize,
+    line_limit: usize,
+    part: &'static str,
+) -> Result<Vec<u8>, ReadError> {
+    let mut line = Vec::new();
+    loop {
+        let room = line_limit
+            .checked_sub(line.len())
+            .ok_or(ReadError::TooLarge(part))?
+            .min(*budget);
+        if room == 0 {
+            return Err(ReadError::TooLarge(part));
+        }
+        let available = match reader.fill_buf() {
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            result => result?,
+        };
+        if available.is_empty() {
+            return Err("connection closed before CRLF".into());
+        }
+        let take = available
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(available.len(), |pos| pos + 1)
+            .min(room);
+        let ended = available[take - 1] == b'\n';
+        line.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        *budget = budget.checked_sub(take).ok_or(ReadError::TooLarge(part))?;
+        if ended {
+            if !line.ends_with(b"\r\n") {
+                return Err("line missing CRLF".into());
+            }
+            line.truncate(line.len() - 2);
+            return Ok(line);
+        }
+    }
+}
+
+fn valid_text(text: &str) -> bool {
+    text.bytes().all(|b| b == b'\t' || (b >= 32 && b != 127))
+}
+
+fn header_parts(line: &str) -> Result<(&str, &str), ReadError> {
+    let (name, value) = line.split_once(':').ok_or("header missing colon")?;
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+        || !valid_text(value)
+    {
+        return Err("invalid header name or control character".into());
+    }
+    Ok((name, value.trim_matches([' ', '\t'])))
+}
+
+fn parse_head(head: &[u8]) -> Result<(u16, Vec<String>), ReadError> {
+    let text = std::str::from_utf8(head).map_err(|_| "head not utf-8")?;
     let mut lines = text.split("\r\n");
     let status_line = lines.next().ok_or("empty head")?;
-    let mut parts = status_line.splitn(3, ' ');
-    let version = parts.next().unwrap_or("");
-    if !version.starts_with("HTTP/1.") {
-        return Err(format!("unsupported version: {version}"));
+    if !valid_text(status_line) {
+        return Err("invalid status control character".into());
     }
-    let status: u16 = parts
-        .next()
-        .and_then(|s| s.parse().ok())
-        .ok_or_else(|| format!("bad status line: {status_line:?}"))?;
-    let headers: Vec<String> = lines
-        .filter(|l| !l.is_empty())
-        .map(|l| l.to_string())
-        .collect();
+    let mut parts = status_line.splitn(3, ' ');
+    if !matches!(parts.next(), Some("HTTP/1.0" | "HTTP/1.1")) {
+        return Err("unsupported HTTP version".into());
+    }
+    let digits = parts.next().ok_or("missing status")?;
+    if digits.len() != 3 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err("bad HTTP status".into());
+    }
+    let status: u16 = digits.parse().map_err(|_| "bad HTTP status")?;
+    if !(100..=599).contains(&status) {
+        return Err("bad HTTP status".into());
+    }
+    let mut headers = Vec::new();
+    for line in lines {
+        header_parts(line)?;
+        headers.push(line.to_string());
+    }
     Ok((status, headers))
 }
 
-enum ChunkState {
-    Done,
-    NeedMore,
+enum Framing {
+    Chunked,
+    Length(usize),
+    Eof,
 }
 
-/// 增量 chunked 解码：把 leftover 中已完整的 chunk 落入 body。
-fn decode_chunk_step(body: &mut Vec<u8>, leftover: &mut Vec<u8>) -> Result<ChunkState, String> {
-    loop {
-        let Some(line_end) = find_crlf(leftover) else {
-            if leftover.len() > 64 {
-                return Err("chunk-size line too long".to_string());
+fn parse_framing(headers: &[String]) -> Result<Framing, ReadError> {
+    let mut length = None;
+    let mut chunked = false;
+    for header in headers {
+        let (name, value) = header_parts(header)?;
+        if name.eq_ignore_ascii_case("content-length") {
+            if length.is_some() || value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+                return Err("invalid or duplicate Content-Length".into());
             }
-            return Ok(ChunkState::NeedMore);
-        };
-        let size_line = String::from_utf8_lossy(&leftover[..line_end]).to_string();
-        let size_str = size_line.split(';').next().unwrap_or("").trim();
-        let size = usize::from_str_radix(size_str, 16)
-            .map_err(|_| format!("bad chunk size: {size_str:?}"))?;
-        let after_size = line_end + 2;
-        if size == 0 {
-            // 终止块后跟 trailer + CRLF；宽松处理：只要收到终止块即完成
-            return Ok(ChunkState::Done);
+            length = Some(
+                value
+                    .parse::<usize>()
+                    .map_err(|_| "invalid Content-Length")?,
+            );
+        } else if name.eq_ignore_ascii_case("transfer-encoding") {
+            if chunked || !value.eq_ignore_ascii_case("chunked") {
+                return Err("unsupported or duplicate Transfer-Encoding".into());
+            }
+            chunked = true;
         }
-        if leftover.len() < after_size + size + 2 {
-            return Ok(ChunkState::NeedMore);
-        }
-        body.extend_from_slice(&leftover[after_size..after_size + size]);
-        let tail = &leftover[after_size + size..];
-        if tail.len() < 2 || &tail[..2] != b"\r\n" {
-            return Err("missing chunk CRLF".to_string());
-        }
-        leftover.drain(..after_size + size + 2);
+    }
+    match (chunked, length) {
+        (true, Some(_)) => Err("conflicting Transfer-Encoding and Content-Length".into()),
+        (true, None) => Ok(Framing::Chunked),
+        (false, Some(len)) => Ok(Framing::Length(len)),
+        (false, None) => Ok(Framing::Eof),
     }
 }
 
-fn find_crlf(buf: &[u8]) -> Option<usize> {
-    buf.windows(2).position(|w| w == b"\r\n")
+fn ensure_body_room(len: usize, size: usize, cap: usize) -> Result<(), ReadError> {
+    match len.checked_add(size) {
+        Some(total) if total <= cap => Ok(()),
+        _ => Err(ReadError::TooLarge("body")),
+    }
 }
 
-/// 供测试/工具构造响应写入器（服务端方向不需要，这里只保留流约定）。
-pub fn _write_all<S: Write>(stream: &mut S, buf: &[u8]) -> Result<(), String> {
-    stream.write_all(buf).map_err(|e| format!("write: {e}"))
+fn read_body<R: Read>(
+    reader: &mut R,
+    body: &mut Vec<u8>,
+    size: usize,
+    cap: usize,
+) -> Result<(), ReadError> {
+    ensure_body_room(body.len(), size, cap)?;
+    let mut left = size;
+    let mut buf = [0; 2048];
+    while left > 0 {
+        let want = left.min(buf.len());
+        let n = read_retry(reader, &mut buf[..want])?;
+        if n == 0 {
+            return Err("connection closed mid-body".into());
+        }
+        ensure_body_room(body.len(), n, cap)?;
+        body.extend_from_slice(&buf[..n]);
+        left -= n;
+    }
+    Ok(())
+}
+
+fn read_chunked<R: BufRead>(
+    reader: &mut R,
+    body: &mut Vec<u8>,
+    cap: usize,
+) -> Result<(), ReadError> {
+    let mut metadata_budget = MAX_HEADER_BLOCK;
+    loop {
+        let line = read_line(reader, &mut metadata_budget, 1024, "chunk metadata")?;
+        let line = std::str::from_utf8(&line).map_err(|_| "bad chunk size line")?;
+        if !valid_text(line) {
+            return Err("invalid chunk metadata control character".into());
+        }
+        let digits = line.split(';').next().unwrap_or("");
+        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("bad chunk size".into());
+        }
+        let size = usize::from_str_radix(digits, 16).map_err(|_| ReadError::TooLarge("body"))?;
+        // Reject a declaration exceeding the remaining cap before reading its payload.
+        ensure_body_room(body.len(), size, cap)?;
+        if size == 0 {
+            loop {
+                let trailer = read_line(
+                    reader,
+                    &mut metadata_budget,
+                    MAX_HEADER_BLOCK,
+                    "chunk metadata",
+                )?;
+                if trailer.is_empty() {
+                    return Ok(());
+                }
+                let trailer = std::str::from_utf8(&trailer).map_err(|_| "trailer not utf-8")?;
+                let (name, _) = header_parts(trailer)?;
+                if name.eq_ignore_ascii_case("content-length")
+                    || name.eq_ignore_ascii_case("transfer-encoding")
+                {
+                    return Err("framing field in trailer".into());
+                }
+            }
+        }
+        metadata_budget = metadata_budget
+            .checked_sub(2)
+            .ok_or(ReadError::TooLarge("chunk metadata"))?;
+        read_body(reader, body, size, cap)?;
+        let mut crlf = [0; 2];
+        reader.read_exact(&mut crlf)?;
+        if crlf != *b"\r\n" {
+            return Err("missing chunk CRLF".into());
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn resp(bytes: &[u8]) -> Result<Response, String> {
+    fn resp(bytes: &[u8]) -> Result<Response, ReadError> {
         let mut cursor = std::io::Cursor::new(bytes.to_vec());
-        read_response(&mut cursor, 1 << 20)
+        read_response(&mut cursor, "GET", 1 << 20)
     }
 
     #[test]
@@ -310,9 +472,279 @@ mod tests {
         assert!(resp_with_cap(raw, 3).is_err());
     }
 
-    fn resp_with_cap(bytes: &[u8], cap: usize) -> Result<Response, String> {
+    fn resp_with_cap(bytes: &[u8], cap: usize) -> Result<Response, ReadError> {
         let mut cursor = std::io::Cursor::new(bytes.to_vec());
-        read_response(&mut cursor, cap)
+        read_response(&mut cursor, "GET", cap)
+    }
+
+    #[test]
+    fn regression_same_packet_body_caps() {
+        for raw in [
+            &b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nab\r\n0\r\n\r\n"[..],
+            &b"HTTP/1.0 200 OK\r\n\r\nab"[..],
+        ] {
+            assert!(
+                resp_with_cap(raw, 1).is_err(),
+                "accepted oversized response"
+            );
+            assert_eq!(resp_with_cap(raw, 2).unwrap().body, b"ab");
+        }
+    }
+
+    struct NoExtraRead<'a>(&'a [u8]);
+
+    impl Read for NoExtraRead<'_> {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            assert!(
+                !self.0.is_empty(),
+                "read payload after oversized declaration"
+            );
+            let n = out.len().min(self.0.len());
+            out[..n].copy_from_slice(&self.0[..n]);
+            self.0 = &self.0[n..];
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn regression_chunk_declaration_rejected_before_payload_read() {
+        let mut stream =
+            NoExtraRead(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n10000000\r\n");
+        let err = read_response(&mut stream, "GET", 1).unwrap_err();
+        assert!(err.to_string().contains("too large"), "{err}");
+    }
+
+    #[test]
+    fn regression_chunk_arithmetic_does_not_overflow() {
+        let raw = format!(
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n",
+            usize::MAX
+        );
+        assert!(resp_with_cap(raw.as_bytes(), 1).is_err());
+    }
+
+    #[test]
+    fn regression_rejects_header_controls() {
+        for control in [0, 1, 11, 12, 13, 10, 31, 127] {
+            let mut raw = b"HTTP/1.1 200 OK\r\nX-Test: before".to_vec();
+            raw.push(control);
+            raw.extend_from_slice(b"after\r\nContent-Length: 0\r\n\r\n");
+            assert!(resp(&raw).is_err(), "accepted control byte {control}");
+        }
+    }
+
+    #[test]
+    fn regression_rejects_ambiguous_framing() {
+        for headers in [
+            "Content-Length: invalid",
+            "Content-Length: +2",
+            "Content-Length: -1",
+            "Content-Length: 2, 2",
+            "Content-Length: 2\r\nContent-Length: 3",
+            "Content-Length: 999999999999999999999999999999999999",
+            "Transfer-Encoding: notchunked",
+            "Transfer-Encoding: gzip, chunked",
+            "Transfer-Encoding: chunked\r\nContent-Length: 2",
+            "Transfer-Encoding: chunked\r\nTransfer-Encoding: chunked",
+        ] {
+            let raw = format!("HTTP/1.1 200 OK\r\n{headers}\r\n\r\n0\r\n\r\n");
+            assert!(resp(raw.as_bytes()).is_err(), "accepted {headers:?}");
+        }
+    }
+
+    #[test]
+    fn regression_skips_interim_responses() {
+        let raw = b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 103 Early Hints\r\nLink: </a>\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nab";
+        let response = resp(raw).unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, b"ab");
+        assert_eq!(response.header_lines, ["Content-Length: 2"]);
+        assert!(resp(b"HTTP/1.1 101 Switching Protocols\r\n\r\n").is_err());
+    }
+
+    #[test]
+    fn regression_bodyless_statuses_ignore_advertised_length() {
+        for status in [204, 304] {
+            let raw = format!("HTTP/1.1 {status} No Body\r\nContent-Length: 999\r\n\r\n");
+            assert!(resp_with_cap(raw.as_bytes(), 1).unwrap().body.is_empty());
+        }
+    }
+
+    #[test]
+    fn regression_bounded_headers_chunks_and_trailers() {
+        let long = "a".repeat(MAX_HEADER_BLOCK);
+        for raw in [
+            format!("HTTP/1.1 200 OK\r\nX: {long}\r\n\r\n"),
+            format!(
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1;{long}\r\na\r\n0\r\n\r\n"
+            ),
+            format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX: {long}\r\n\r\n"),
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX: unfinished".to_string(),
+        ] {
+            assert!(
+                resp(raw.as_bytes()).is_err(),
+                "accepted unbounded or truncated metadata"
+            );
+        }
+    }
+
+    #[test]
+    fn head_does_not_read_a_body_even_with_chunked_framing() {
+        let mut stream = NoExtraRead(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
+        assert!(read_response(&mut stream, "HEAD", 0)
+            .unwrap()
+            .body
+            .is_empty());
+    }
+
+    #[test]
+    fn caps_zero_exact_and_cumulative_chunks() {
+        for raw in [
+            &b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"[..],
+            &b"HTTP/1.0 200 OK\r\n\r\n"[..],
+            &b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"[..],
+        ] {
+            assert!(resp_with_cap(raw, 0).unwrap().body.is_empty());
+        }
+        let raw = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n0\r\nX-Trailer: fine\r\n\r\n";
+        assert_eq!(resp_with_cap(raw, 2).unwrap().body, b"ab");
+        assert!(matches!(resp_with_cap(raw, 1), Err(ReadError::TooLarge(_))));
+        let mut early =
+            NoExtraRead(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\n");
+        assert!(matches!(
+            read_response(&mut early, "GET", 1),
+            Err(ReadError::TooLarge(_))
+        ));
+        assert!(ensure_body_room(usize::MAX, 1, usize::MAX).is_err());
+        assert!(ensure_body_room(0, usize::MAX, usize::MAX).is_ok());
+    }
+
+    #[test]
+    fn eof_rejects_zero_cap_and_late_overflow() {
+        assert!(matches!(
+            resp_with_cap(b"HTTP/1.0 200 OK\r\n\r\na", 0),
+            Err(ReadError::TooLarge(_))
+        ));
+        let raw = format!("HTTP/1.0 200 OK\r\n\r\n{}", "a".repeat(5000));
+        assert_eq!(
+            resp_with_cap(raw.as_bytes(), 5000).unwrap().body.len(),
+            5000
+        );
+        assert!(matches!(
+            resp_with_cap(raw.as_bytes(), 4999),
+            Err(ReadError::TooLarge(_))
+        ));
+    }
+
+    #[test]
+    fn header_limit_includes_delimiters_and_interim_heads() {
+        let prefix = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX: ";
+        let suffix = "\r\n\r\n";
+        let raw = format!(
+            "{prefix}{}{suffix}",
+            "a".repeat(MAX_HEADER_BLOCK - prefix.len() - suffix.len())
+        );
+        assert!(resp(raw.as_bytes()).is_ok());
+        let oversized = raw.replacen("X: ", "X: aa", 1);
+        assert!(matches!(
+            resp(oversized.as_bytes()),
+            Err(ReadError::TooLarge(_))
+        ));
+        let interim = format!("HTTP/1.1 100 Continue\r\n\r\n{raw}");
+        assert!(matches!(
+            resp(interim.as_bytes()),
+            Err(ReadError::TooLarge(_))
+        ));
+    }
+
+    #[test]
+    fn chunk_metadata_has_line_and_cumulative_limits() {
+        let prefix = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+        let exact_line = format!("{prefix}1;{}\r\na\r\n0\r\n\r\n", "x".repeat(1020));
+        assert_eq!(resp(exact_line.as_bytes()).unwrap().body, b"a");
+        let oversized = exact_line.replacen("1;", "1;x", 1);
+        assert!(matches!(
+            resp(oversized.as_bytes()),
+            Err(ReadError::TooLarge(_))
+        ));
+        let many_chunks = format!(
+            "{prefix}{}0\r\n\r\n",
+            "1\r\na\r\n".repeat(MAX_HEADER_BLOCK / 5 + 1)
+        );
+        assert!(matches!(
+            resp(many_chunks.as_bytes()),
+            Err(ReadError::TooLarge(_))
+        ));
+        let trailer_prefix = format!("{prefix}0\r\nX: ");
+        let trailer = format!(
+            "{trailer_prefix}{}\r\n\r\n",
+            "a".repeat(MAX_HEADER_BLOCK - 10)
+        );
+        assert!(resp(trailer.as_bytes()).is_ok());
+        let too_long = trailer.replacen("X: ", "X: aa", 1);
+        assert!(matches!(
+            resp(too_long.as_bytes()),
+            Err(ReadError::TooLarge(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_malformed_chunk_lines_and_trailers() {
+        for body in [
+            "+1\r\na\r\n0\r\n\r\n",
+            " 1\r\na\r\n0\r\n\r\n",
+            "g\r\n",
+            "1\r\naXX0\r\n\r\n",
+            "0\r\nX: bad\0value\r\n\r\n",
+            "0\r\nContent-Length: 3\r\n\r\n",
+            "0\r\nTransfer-Encoding: chunked\r\n\r\n",
+            "0\r\n",
+            "0\r\n folded trailer\r\n\r\n",
+        ] {
+            let raw = format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{body}");
+            assert!(resp(raw.as_bytes()).is_err(), "accepted {body:?}");
+        }
+        let raw = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffffffffffffffffffff\r\n";
+        assert!(matches!(resp(raw), Err(ReadError::TooLarge(_))));
+    }
+
+    #[test]
+    fn fragmented_response_and_io_error_kind_preserved() {
+        struct Fragmented<'a>(&'a [u8]);
+        impl Read for Fragmented<'_> {
+            fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+                let want = out.len().min(1);
+                self.0.read(&mut out[..want])
+            }
+        }
+        let mut raw = Fragmented(b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nTransfer-Encoding: ChUnKeD\r\n\r\n2\r\nab\r\n0\r\nX: value\r\n\r\n");
+        assert_eq!(read_response(&mut raw, "GET", 2).unwrap().body, b"ab");
+        struct Fail;
+        impl Read for Fail {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::from_raw_os_error(libc::EAGAIN))
+            }
+        }
+        let error = read_response(&mut Fail, "GET", 1).unwrap_err();
+        assert!(matches!(error, ReadError::Io(e) if e.raw_os_error() == Some(libc::EAGAIN)));
+    }
+
+    #[test]
+    fn header_tokens_and_status_controls_are_validated() {
+        for header in [
+            "X Name: value",
+            "X@: value",
+            "X : value",
+            " folded: value",
+            "No-Colon",
+        ] {
+            let raw = format!("HTTP/1.1 200 OK\r\n{header}\r\n\r\n");
+            assert!(resp(raw.as_bytes()).is_err());
+        }
+        assert!(resp(b"HTTP/1.1 200 O\0K\r\n\r\n").is_err());
+        assert!(resp(b"HTTP/1.1 200 OK\r\nX: tab\tvalue\r\nContent-Length: 0\r\n\r\n").is_ok());
+        assert!(resp(b"HTTP/1.1 100 Continue\r\n\r\n").is_err());
+        assert!(resp(b"HTTP/1.1 101 Switching Protocols\r\n\r\n").is_err());
     }
 
     #[test]

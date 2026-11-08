@@ -18,6 +18,20 @@ pub struct TestServer {
 
 impl TestServer {
     pub fn spawn(response: String, hold: bool) -> TestServer {
+        Self::spawn_mode(response, hold, false, false)
+    }
+
+    #[allow(dead_code)] // common is compiled separately by each integration test
+    pub fn stalled(response: &str) -> TestServer {
+        Self::spawn_mode(response.to_string(), false, false, true)
+    }
+
+    #[allow(dead_code)]
+    pub fn slow_handshake() -> TestServer {
+        Self::spawn_mode(String::new(), false, true, false)
+    }
+
+    fn spawn_mode(response: String, hold: bool, drip: bool, stall: bool) -> TestServer {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()])
             .expect("rcgen cert");
         let root_pem = cert.cert.pem();
@@ -28,16 +42,31 @@ impl TestServer {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("addr");
         let handle = std::thread::spawn(move || {
-            let Ok((sock, _)) = listener.accept() else {
+            let Ok((mut sock, _)) = listener.accept() else {
                 return;
             };
+            sock.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            sock.set_write_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
             if hold {
-                // 不握手不响应：供客户端超时路径测试
-                std::thread::sleep(std::time::Duration::from_secs(30));
-                drop(sock);
+                let mut buf = [0; 8192];
+                while matches!(sock.read(&mut buf), Ok(n) if n > 0) {}
                 return;
             }
-            serve_one(sock, &cert_der, &key, &response);
+            if drip {
+                // A fragmented, incomplete TLS handshake record: every read makes progress,
+                // but the total budget must still expire inside rustls::complete_io.
+                let _ = sock.write_all(&[22, 3, 3, 0x10, 0]);
+                for _ in 0..25 {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    if sock.write_all(&[0]).is_err() {
+                        break;
+                    }
+                }
+                return;
+            }
+            serve_one(sock, &cert_der, &key, &response, stall);
         });
         TestServer {
             addr,
@@ -52,6 +81,7 @@ fn serve_one(
     cert: &CertificateDer<'static>,
     key: &PrivateKeyDer<'static>,
     response: &str,
+    stall: bool,
 ) {
     let config = rustls::ServerConfig::builder_with_provider(
         rustls::crypto::ring::default_provider().into(),
@@ -67,6 +97,10 @@ fn serve_one(
     let _ = stream.read(&mut buf); // 请求很小，一次读足够；失败也让响应继续
     let _ = stream.write_all(response.as_bytes());
     let _ = stream.flush();
+    if stall {
+        let _ = stream.read(&mut buf); // Wait for client timeout/close, without closing the response.
+        return;
+    }
     // close_notify：让 EOF-终止式响应的客户端读到干净的流结束
     stream.conn.send_close_notify();
     let _ = stream.conn.complete_io(&mut stream.sock);

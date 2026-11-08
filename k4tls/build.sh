@@ -28,7 +28,7 @@ CC_MUSL="$HOME/x-tools/arm-linux-musleabihf-cross/bin/arm-linux-musleabihf-gcc"
 CC_ARMEL="$HOME/x-tools/arm-kindle5-linux-gnueabi/bin/arm-kindle5-linux-gnueabi-gcc"
 
 build_bench() {
-    rustup target add "$TARGET_MUSL" 2>/dev/null || true
+    rustup target add "$TARGET_MUSL"
     if [ ! -x "$CC_MUSL" ]; then
         echo "[build.sh] 缺 musl 交叉 gcc（ring C 部分需要）:" >&2
         echo "  mkdir -p ~/x-tools && cd ~/x-tools && curl -x http://192.168.2.153:16492 -LO https://musl.cc/arm-linux-musleabihf-cross.tgz && tar xzf arm-linux-musleabihf-cross.tgz" >&2
@@ -45,7 +45,7 @@ build_bench() {
 }
 
 build_so() {
-    rustup target add "$TARGET_ARMEL" 2>/dev/null || true
+    rustup target add "$TARGET_ARMEL"
     if [ ! -x "$CC_ARMEL" ]; then
         echo "[build.sh] 缺 armel 交叉 gcc（~/x-tools/arm-kindle5-linux-gnueabi）" >&2
         exit 3
