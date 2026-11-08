@@ -40,22 +40,18 @@ def main(argv=None):
     present = set()
     if os.path.isdir(pdir):
         present = {d for d in os.listdir(pdir) if d.endswith(".koplugin")}
-    for keep in manifest["keep_plugins"]:
-        if keep not in present:
+    keep_plugins = set(manifest["keep_plugins"])
+    for keep in sorted(keep_plugins):
+        if keep not in present or not os.path.isdir(os.path.join(pdir, keep)):
             ok = fail(f"keep plugin missing: {keep}")
-    excluded_expected = set()
-    if os.path.isdir(os.path.join(os.path.dirname(tree) or ".", "_src_unused")):
-        pass  # 源树不在场时无法交叉核对排除面，由 SLIM_REPORT 承担
+    for extra in sorted(present - keep_plugins):
+        ok = fail(f"unexpected plugin: {extra}")
     report_path = os.path.join(tree, "SLIM_REPORT.json")
     if os.path.exists(report_path):
         with open(report_path, "r", encoding="utf-8") as fh:
             report = json.load(fh)
         if report.get("dst_bytes", 0) == 0:
             ok = fail("report says dst is empty")
-        src_excluded = set(report.get("excluded_plugins", []))
-        leaked = src_excluded & present
-        if leaked:
-            ok = fail(f"excluded plugins leaked into tree: {', '.join(sorted(leaked))}")
 
     fdir = os.path.join(tree, "fonts")
     kept_font_files = set()
@@ -64,6 +60,11 @@ def main(argv=None):
             for name in files:
                 rel = os.path.relpath(os.path.join(root, name), fdir).replace(os.sep, "/")
                 kept_font_files.add(rel)
+    keep_fonts = set(manifest["keep_fonts"])
+    for missing in sorted(keep_fonts - kept_font_files):
+        ok = fail(f"keep font missing: {missing}")
+    for extra in sorted(kept_font_files - keep_fonts):
+        ok = fail(f"unexpected font: {extra}")
     if not any("DroidSansFallback" in f for f in kept_font_files):
         ok = fail("CJK fallback font (DroidSansFallback*) not in kept set — weread 正文/回退渲染会退化")
 

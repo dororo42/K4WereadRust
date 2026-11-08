@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unittest
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 SLIM = os.path.join(TOOLS, "slim_koreader.py")
@@ -33,12 +34,54 @@ def build_fake_tree(root):
     for font in ("droid/DroidSansFallback.ttf", "droid/DroidSansFallbackBold.ttf",
                  "freefont/FreeSans.ttf", "freefont/FreeSansBold.ttf",
                  "freefont/FreeSerif.ttf", "noto/NotoSansArabic-Regular.ttf",
-                 "noto/NotoSansHebrew-Regular.ttf"):
+                 "noto/NotoSansHebrew-Regular.ttf", "custom/ReadingSerif.otf"):
         touch(f"fonts/{font}", 4096)
 
 
 def run(args):
-    return subprocess.run([sys.executable] + args, capture_output=True, text=True)
+    return subprocess.run([sys.executable, "-B"] + args, capture_output=True, text=True, timeout=15)
+
+
+def snapshot_tree(root):
+    """比较目录、文件字节及链接目标，不跟随目录符号链接。"""
+    entries = {}
+    for current, dirs, files in os.walk(root):
+        for name in dirs + files:
+            path = os.path.join(current, name)
+            rel = os.path.relpath(path, root)
+            if os.path.islink(path):
+                entries[rel] = ("link", os.readlink(path))
+            elif os.path.isdir(path):
+                entries[rel] = ("dir",)
+            else:
+                with open(path, "rb") as fh:
+                    entries[rel] = ("file", fh.read())
+    return entries
+
+
+def write_manifest(path, data):
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)
+
+
+def make_fixture(tmp, existing_dst=False):
+    src = os.path.join(tmp, "parent", "koreader")
+    dst = os.path.join(tmp, "slim")
+    manifest_path = os.path.join(tmp, "manifest.json")
+    build_fake_tree(src)
+    manifest = {
+        "keep_plugins": ["hotkeys.koplugin", "weread_K4.koplugin", "k4refresh.koplugin"],
+        "keep_fonts": ["droid/DroidSansFallback.ttf", "freefont/FreeSans.ttf",
+                       "freefont/FreeSansBold.ttf", "freefont/FreeSerif.ttf",
+                       "custom/ReadingSerif.otf"],
+    }
+    write_manifest(manifest_path, manifest)
+    if existing_dst:
+        build_fake_tree(dst)
+        os.makedirs(os.path.join(dst, "existing-empty-dir"))
+        with open(os.path.join(dst, "sentinel"), "wb") as fh:
+            fh.write(b"existing destination must survive preflight failure")
+    return src, dst, manifest_path, manifest
 
 
 def main():
@@ -47,6 +90,7 @@ def main():
         src = os.path.join(tmp, "koreader")
         dst = os.path.join(tmp, "slim")
         build_fake_tree(src)
+        src_before = snapshot_tree(src)
 
         r = run([SLIM, src, dst, "--manifest", os.path.join(TOOLS, "slim_manifest.json")])
         assert r.returncode == 0, f"slim failed: {r.stdout}\n{r.stderr}"
@@ -73,11 +117,11 @@ def main():
         c = run([CHECK, dst, "--manifest", os.path.join(TOOLS, "slim_manifest.json")])
         assert c.returncode == 0, f"check failed: {c.stdout}\n{c.stderr}"
 
+        dst_before = snapshot_tree(dst)
         r2 = run([SLIM, src, dst, "--manifest", os.path.join(TOOLS, "slim_manifest.json")])
         assert r2.returncode != 0, "idempotency guard failed: second run should refuse existing dst"
-
-        src_after = sum(os.path.getsize(os.path.join(r_, f)) for r_, _, fs in os.walk(src) for f in fs)
-        assert src_after == src_size, "source tree mutated!"
+        assert snapshot_tree(dst) == dst_before, "existing destination mutated!"
+        assert snapshot_tree(src) == src_before, "source tree mutated!"
 
         print("test_slim: PASS (exclusion, keep-set, report, check gate, idempotency guard, source untouched)")
         return 0
@@ -85,5 +129,159 @@ def main():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+class SlimTests(unittest.TestCase):
+    def assert_read_only_run(self, tmp, args, success=False, diagnostic=None):
+        # 整个临时沙箱快照覆盖源树、现存目标、空目录和所有别名。
+        before = snapshot_tree(tmp)
+        result = run(args)
+        self.assertTrue(before == snapshot_tree(tmp), "source or destination contents changed")
+        output = result.stdout + result.stderr
+        if success:
+            self.assertEqual(result.returncode, 0, output)
+        else:
+            self.assertNotEqual(result.returncode, 0, output)
+        if diagnostic:
+            self.assertIn(diagnostic, output)
+
+    def assert_slim(self, src, dst, manifest_path, force=False):
+        before = snapshot_tree(src)
+        result = run([SLIM, src, dst, "--manifest", manifest_path] + (["--force"] if force else []))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(snapshot_tree(src), before)
+
+    def test_existing_smoke(self):
+        self.assertEqual(main(), 0)
+
+    def test_source_report_symlink_cannot_overwrite_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dst, manifest_path, _manifest = make_fixture(tmp)
+            os.symlink(os.path.join(src, "reader.lua"), os.path.join(src, "SLIM_REPORT.json"))
+            self.assert_slim(src, dst, manifest_path)
+            self.assertFalse(os.path.islink(os.path.join(dst, "SLIM_REPORT.json")))
+            self.assert_read_only_run(tmp, [CHECK, dst, "--manifest", manifest_path], success=True)
+
+    def test_overlap_rejected_before_mutation(self):
+        for relation in ("same", "ancestor", "descendant", "existing_descendant"):
+            for alias in ("direct", "source", "destination", "destination_parent"):
+                for force in (False, True):
+                    with self.subTest(relation=relation, alias=alias, force=force), tempfile.TemporaryDirectory() as tmp:
+                        src, _dst, manifest_path, _manifest = make_fixture(tmp)
+                        if relation == "same":
+                            dst = src
+                        elif relation == "ancestor":
+                            dst = os.path.dirname(src)
+                        else:
+                            # 长组件限制旧实现 RED 时的递归深度，避免耗尽临时空间。
+                            dst = os.path.join(src, "nested-slim-" + "x" * 180)
+                            if relation == "existing_descendant":
+                                build_fake_tree(dst)
+                        link = os.path.join(tmp, "alias")
+                        if alias == "source":
+                            os.symlink(src, link)
+                            src = link
+                        elif alias == "destination":
+                            os.symlink(dst, link)
+                            dst = link
+                        elif alias == "destination_parent":
+                            os.symlink(os.path.dirname(dst), link)
+                            dst = os.path.join(link, os.path.basename(dst))
+                        args = [SLIM, src, dst, "--manifest", manifest_path]
+                        if force:
+                            args.append("--force")
+                        self.assert_read_only_run(tmp, args, diagnostic="overlap")
+
+    def test_invalid_manifest_preserves_existing_destination(self):
+        invalid = ["{", "[]", "null", "{}",
+                   '{"keep_plugins": "hotkeys.koplugin", "keep_fonts": []}',
+                   '{"keep_plugins": [], "keep_fonts": null}',
+                   '{"keep_plugins": [{}], "keep_fonts": []}',
+                   '{"keep_plugins": [], "keep_fonts": [null]}']
+        for content in invalid:
+            with self.subTest(manifest=content), tempfile.TemporaryDirectory() as tmp:
+                src, dst, manifest_path, _manifest = make_fixture(tmp, existing_dst=True)
+                with open(manifest_path, "w", encoding="utf-8") as fh:
+                    fh.write(content)
+                self.assert_read_only_run(tmp, [SLIM, src, dst, "--manifest", manifest_path, "--force"])
+
+    def test_missing_kept_resources_fail_before_mutation(self):
+        for kind, count in (("plugins", 3), ("fonts", 5)):
+            for index in range(count):
+                for existing_dst in (False, True):
+                    with self.subTest(kind=kind, index=index, existing_dst=existing_dst), tempfile.TemporaryDirectory() as tmp:
+                        src, dst, manifest_path, manifest = make_fixture(tmp, existing_dst=existing_dst)
+                        name = manifest[f"keep_{kind}"][index]
+                        path = os.path.join(src, kind, name)
+                        if kind == "plugins":
+                            shutil.rmtree(path)
+                        else:
+                            os.remove(path)
+                        self.assert_read_only_run(tmp, [SLIM, src, dst, "--manifest", manifest_path, "--force"])
+
+    def test_disjoint_prefix_paths_and_force_still_work(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, _dst, manifest_path, _manifest = make_fixture(tmp)
+            dst = src + "-slim"
+            self.assert_slim(src, dst, manifest_path)
+            before = snapshot_tree(tmp)
+            self.assert_slim(src, dst, manifest_path, force=True)
+            self.assertEqual(snapshot_tree(tmp), before)
+            self.assert_read_only_run(tmp, [CHECK, dst, "--manifest", manifest_path], success=True)
+
+    def test_check_rejects_every_missing_kept_resource(self):
+        for kind, count in (("plugins", 3), ("fonts", 5)):
+            for index in range(count):
+                with self.subTest(kind=kind, index=index), tempfile.TemporaryDirectory() as tmp:
+                    src, dst, manifest_path, manifest = make_fixture(tmp)
+                    self.assert_slim(src, dst, manifest_path)
+                    name = manifest[f"keep_{kind}"][index]
+                    path = os.path.join(dst, kind, name)
+                    if kind == "plugins":
+                        shutil.rmtree(path)
+                    else:
+                        os.remove(path)
+                    self.assert_read_only_run(tmp, [CHECK, dst, "--manifest", manifest_path])
+
+    def test_check_rejects_extra_resources_despite_forged_report(self):
+        for kind, name in (("plugins", "opds.koplugin/main.lua"),
+                           ("plugins", "unreported.koplugin/main.lua"),
+                           ("fonts", "freefont/Unused.otf"),
+                           ("fonts", "droid/DroidSansFallbackSpoof.ttf")):
+            with self.subTest(kind=kind, name=name), tempfile.TemporaryDirectory() as tmp:
+                src, dst, manifest_path, _manifest = make_fixture(tmp)
+                self.assert_slim(src, dst, manifest_path)
+                path = os.path.join(dst, kind, name)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as fh:
+                    fh.write(b"not in manifest")
+                report_path = os.path.join(dst, "SLIM_REPORT.json")
+                with open(report_path, encoding="utf-8") as fh:
+                    report = json.load(fh)
+                report["excluded_plugins"] = []
+                report[f"kept_{kind}"].append(name.split("/")[0] if kind == "plugins" else name)
+                write_manifest(report_path, report)
+                self.assert_read_only_run(tmp, [CHECK, dst, "--manifest", manifest_path])
+
+    def test_check_uses_manifest_not_report_exclusions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dst, manifest_path, manifest = make_fixture(tmp)
+            self.assert_slim(src, dst, manifest_path)
+            report_path = os.path.join(dst, "SLIM_REPORT.json")
+            with open(report_path, encoding="utf-8") as fh:
+                report = json.load(fh)
+            report["excluded_plugins"] = manifest["keep_plugins"]
+            write_manifest(report_path, report)
+            self.assert_read_only_run(tmp, [CHECK, dst, "--manifest", manifest_path], success=True)
+
+    def test_check_rejects_file_in_place_of_kept_plugin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dst, manifest_path, manifest = make_fixture(tmp)
+            self.assert_slim(src, dst, manifest_path)
+            path = os.path.join(dst, "plugins", manifest["keep_plugins"][0])
+            shutil.rmtree(path)
+            with open(path, "wb") as fh:
+                fh.write(b"not a plugin directory")
+            self.assert_read_only_run(tmp, [CHECK, dst, "--manifest", manifest_path])
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    unittest.main(verbosity=2)

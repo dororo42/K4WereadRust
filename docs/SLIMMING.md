@@ -14,6 +14,13 @@
 > 诚实校准：报告 §七 写的 "176M → ~70M" 需要叠加 S2 的引擎/Lua 裁剪才能达到；
 > S1（本阶段）的合理预期是 ~115-120 MB。§五 的 S1 "体积 -60%+" 指字体+插件单项占比。
 
+## K5 实测差异（2026-11-08）
+
+用户指定 K5 的 KOReader v2026.07.1 树，`du -sk` 实测整树 65728 KiB、字体 25168 KiB、插件 4008 KiB；这不是上表报告中的 K4 基线。
+该树没有 `droid/DroidSansFallback.ttf` 或 `freefont/FreeSansBold.ttf`，CJK 文件是 `noto/NotoSansCJKsc-Regular.otf`（16032 KiB）。
+现有 manifest **不能用于该 K5**；必须确认界面字体、当前正文字体及字体许可证保留集后单独调整，再核算真实节省量。
+设备还有 `SSH.koplugin`；未经确认不得按三插件白名单部署而移除远程恢复入口。本轮仅枚举和测量，没有裁剪或部署设备树。
+
 ## 工具
 
 - `tools/slim_koreader.py`：源树 → 精简副本。幂等、永不写源树、产物带 `SLIM_REPORT.json`。

@@ -80,6 +80,8 @@ def copy_tree(src, dst, skip_dirs=(), skip_files=()):
             os.makedirs(dst_root, exist_ok=True)
         for f in files:
             rel = os.path.normpath(os.path.join(rel_root, f)).replace(os.sep, "/")
+            if rel == "SLIM_REPORT.json":
+                continue
             if rel in skip_files:
                 skipped_files += 1
                 continue
@@ -99,8 +101,12 @@ def copy_tree(src, dst, skip_dirs=(), skip_files=()):
 def load_manifest(path):
     with open(path, "r", encoding="utf-8") as fh:
         data = json.load(fh)
-    if not isinstance(data.get("keep_plugins"), list) or not isinstance(data.get("keep_fonts"), list):
-        raise SystemExit(f"manifest invalid: keep_plugins/keep_fonts must be lists ({path})")
+    if not isinstance(data, dict):
+        raise SystemExit(f"manifest invalid: expected an object ({path})")
+    for key in ("keep_plugins", "keep_fonts"):
+        entries = data.get(key)
+        if not isinstance(entries, list) or not all(isinstance(entry, str) for entry in entries):
+            raise SystemExit(f"manifest invalid: {key} must be a list of strings ({path})")
     return data
 
 
@@ -139,12 +145,11 @@ def main(argv=None):
         ap.error("dst required unless --list-plugins/--list-fonts")
 
     dst = os.path.abspath(args.dst)
-    if os.path.exists(dst):
-        if args.force:
-            print(f"[warn] removing existing dst: {dst}")
-            shutil.rmtree(dst)
-        else:
-            raise SystemExit(f"dst exists (refusing to overwrite; idempotency guard): {dst}")
+    real_src, real_dst = os.path.realpath(src), os.path.realpath(dst)
+    if os.path.commonpath((real_src, real_dst)) in (real_src, real_dst):
+        raise SystemExit(f"source and destination trees overlap: {src} -> {dst}")
+    if os.path.exists(dst) and not args.force:
+        raise SystemExit(f"dst exists (refusing to overwrite; idempotency guard): {dst}")
 
     manifest = load_manifest(args.manifest)
     keep_plugins = set(manifest["keep_plugins"])
@@ -161,8 +166,10 @@ def main(argv=None):
     present_fonts = set(fonts_in(src))
     missing_fonts = sorted(keep_fonts - present_fonts)
     if missing_fonts:
-        print("[warn] keep_fonts entries absent from source (verify via --list-fonts): "
-              + ", ".join(missing_fonts), file=sys.stderr)
+        raise SystemExit(
+            "manifest keep_fonts not present in source (fix names via --list-fonts): "
+            + ", ".join(missing_fonts)
+        )
 
     excluded_plugins = sorted(present_plugins - keep_plugins)
     excluded_fonts = sorted(present_fonts - keep_fonts)
@@ -171,6 +178,10 @@ def main(argv=None):
     skip_files = {f"{FONTS_SUBDIR}/{name}" for name in excluded_fonts}
 
     src_size = dir_size(src)
+    # 所有只读预检通过后，才允许替换现存目标。
+    if args.force and os.path.exists(dst):
+        print(f"[warn] removing existing dst: {dst}")
+        shutil.rmtree(dst)
     skipped_dirs, skipped_files = copy_tree(src, dst, skip_dirs, skip_files)
     dst_size = dir_size(dst)
 
