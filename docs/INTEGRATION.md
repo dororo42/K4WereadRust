@@ -108,17 +108,19 @@ openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial \
   -out server.pem -days 3 -sha256 -extfile leaf.ext
 # 2. 本机夹具（仅绑定回环）+ 设备端 harness（经 SSH -R 反向转发，各自会话自持转发）
 python3 tools/tls_fixture.py --cert /tmp/k4tls-https/server.pem --key /tmp/k4tls-https/server.key &
-sshpass -p '' ssh -p 2222 -o ExitOnForwardFailure=yes -R 127.0.0.1:18474:127.0.0.1:18474 \
+# 限时用本机 timeout 包整条 ssh；设备端禁用 timeout（该机 busybox timeout applet 会段错误，见下）
+timeout 300 sshpass -p '' ssh -p 2222 -o ExitOnForwardFailure=yes -R 127.0.0.1:18474:127.0.0.1:18474 \
   root@192.168.2.157 \
-  'cd /mnt/us/koreader && ./luajit -joff /tmp/k4tls-check-*/tools/device_transport_check.lua \
+  'cd /mnt/us/koreader && LD_LIBRARY_PATH=/mnt/us/koreader/libs ./luajit /tmp/k4tls-check-*/tools/device_transport_check.lua \
    /tmp/k4tls-check-*/lua https://localhost:18474 /tmp/k4tls-check-*/ca.pem 10'
 ```
 
 - 基址用 `https://localhost`（非 127.0.0.1）才会经过 k4tls 的 DNS worker 路径；证书 SAN 已含 `DNS:localhost`。
-- 设备侧独立进程验证**必须 `-joff`**：该设备 KOReader 补丁版 LuaJIT 在 JIT-on 下纯启动可段错误（与本组件无关，见 LOG.md 同日记录），正式 KOReader 应用内的 k4tls 行为需单独验收。
-- 设备端长跑命令包 `timeout`；终止本地 ssh 前先确认远端进程已退出，避免残留进程占满单核设备（本轮实录：泄漏进程 6:40 CPU 致后续诊断失真）。
+- 裸跑设备 luajit **必须带 `LD_LIBRARY_PATH=/mnt/us/koreader/libs`**，否则 `ssl.core` 找不到 `libssl.so.60`、LuaSec 不可用（luasec 臂全部失败）。KOReader 的 `socket.http` 对 https 基址会委托 `ssl.https`，这是 luasec 臂经 `http.request` 也能走 TLS 的机制。
+- 独立进程 JIT-on 与 `-joff` 均实测正常（2026-11-08 晚各 5/5 rc=0）；早前"JIT-on 纯启动必崩"结论系设备端 `timeout` 段错误假象。正式 KOReader 应用内行为仍需单独验收。
+- **设备端不要用 `timeout` 包裹命令**：该机 busybox 的 `timeout` applet 稳定段错误（EXIT 139，2026-11-08 实录 `timeout 5 /bin/true` 复现，曾致一连串"exec 普遍段错误/JIT-on 必崩"的误诊）。需要限时就在本机 `timeout N ssh …` 包整条会话。终止本地 ssh 前仍要确认远端进程退出（末尾 `pgrep` 检查），避免残留进程占满单核设备。
 
 ## 结论边界（2026-11-08 K5）
 
-- 已验证：armel .so 在 glibc 2.12.1 LuaJIT 的 dlopen、FFI 往返、全部传输失败路径语义、限额/超时/证书校验、持久 DNS worker 生命周期（nodelete）、-joff 下约 470 请求零失败。
+- 已验证：armel .so 在 glibc 2.12.1 LuaJIT 的 dlopen、FFI 往返、全部传输失败路径语义、限额/超时/证书校验、持久 DNS worker 生命周期（nodelete）、约 560 请求零失败（传输链 + 浸泡 + 基准）；受控负载基准（16K/128K/512K × 15 × 双后端交替，回环 TLS1.2）：k4tls 中位 43.1/118.9/367.6 ms vs LuaSec 106.0/188.4/434.8 ms。
 - 未验证：R4 正式业务基准（weread 真实负载双后端对比）、K4 真机、KOReader 应用内（JIT 与 UI）行为、瘦身部署。

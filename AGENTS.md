@@ -31,8 +31,8 @@ K4weread Phase 1 工程仓（评估报告 §七 分期）：**无 fork 的 Rust 
 ## Current Handoff
 
 - Latest: `handoffs/2026-11-08-181521-k4wereadrust-phase1/HANDOFF.md`（文末含 2026-11-08 晚间追加：K5 实测结局与更正，以其为准）
-- Remote: https://github.com/dororo42/K4WereadRust（public，origin/main = bb24b19）
-- Branch: main @ bb24b19（68a5e48 传输硬化 / 3c48aa4 瘦身守卫 / e7ea207 夹具与文档 / 73af36f 状态行 / bb24b19 基准工具）
-- Status: K5 临时目录传输链全绿（-joff）、KUAL 扩展已装 K5；可控负载基准与设备清理因 K5 新进程 exec 普遍段错误挂起，待设备重启后重跑；R4 业务基准、K4 真机、瘦身部署、翻闸/发版待条件或授权
+- Remote: https://github.com/dororo42/K4WereadRust（public，main 已推 origin）
+- Branch: main（68a5e48 传输硬化 / 3c48aa4 瘦身守卫 / e7ea207 夹具与文档 / bb24b19 基准工具；后续提交见 GH）
+- Status: K5 传输链全绿 + 受控负载基准完成（k4tls 中位 43.1/118.9/367.6 ms vs LuaSec 106.0/188.4/434.8 ms，16K/128K/512K，回环夹具非 R4）；设备端禁用 `timeout`、裸 luajit 需 LD_LIBRARY_PATH（见 INTEGRATION.md）；R4 业务基准、K4 真机、瘦身部署、翻闸/发版待条件或授权
 
 任何 agent 开始工作前，先读上面的 HANDOFF.md。这份指针由 orbital_handoff 维护，手工交接时请同步更新。

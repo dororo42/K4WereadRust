@@ -72,3 +72,11 @@
 - 处置：设备侧全部挂起（bench、R4、恢复 printk/core_pattern、清理 luajit.wedged/launch.flag），待设备重启后重跑——重启属用户设备操作，需用户执行或授权。本机夹具（18474）与临时证书保留待复跑，复跑结束后删除私钥。
 - 主仓上线：GH public 仓库 github.com/dororo42/K4WereadRust（gh CLI 创建）。首推失败根因是主仓**未配置任何 remote**（此前误判为凭证问题）；remote add origin + 单次 `-c credential.helper='!/home/doro/.local/bin/gh auth git-credential'`（未改全局 git config）经 LAN 代理推送成功，origin/main=bb24b19 已 ls-remote 核实。
 - 教训：对照矩阵全部失败时，先跑与被测物无关的最小进程（busybox 级）对照，可提前数轮定位到设备级问题，避免在组件侧反复归因。
+
+## 2026-11-08 22:30 — 误诊修正（timeout applet 假象）与 K5 可控负载基准完成
+
+- **根因修正，推翻本日两个结论**（"设备新进程 exec 普遍段错误"、"JIT-on 纯启动必崩"）：真正故障点是设备 busybox 的 `timeout` applet 稳定段错误（`timeout 5 /bin/true` → 139 复现；`/usr/bin/timeout → /bin/busybox`，busybox mtime Aug 2 但 echo/cat/ls/grep 同体裸跑全 rc=0）。当日所有失败测试均被 device-side `timeout` 包裹；裸跑对照 `/bin/busybox echo`、`cat`、`./luajit -e`（JIT-on 与 -joff 各 5/5）全部 rc=0。设备 uptime 1 天 19 小时**从未重启**——不存在"挂起后 exec 退化"，"好窗口/坏窗口"实为误诊链条。新纪律：**设备端禁用 `timeout`，限时用本机 `timeout` 包整条 ssh**（INTEGRATION.md 已更新）。
+- 基准第二个坑：裸跑 luajit 必须带 `LD_LIBRARY_PATH=/mnt/us/koreader/libs`，否则 ssl.core 加载失败（libssl.so.60 缺失）、luasec 臂全灭；KOReader 的 `socket.http` 对 https 基址委托 `ssl.https`（probe 实证报错链），此前传输链全绿依赖同样的库路径可用。此前会话如何带入该环境未留痕，现已在 INTEGRATION.md 复现命令中显式写明。
+- **K5 可控负载基准完成**（RC=0，90/90 正文等长校验通过，无残留进程）：16KiB/128KiB/512KiB × 15 样本 × 双后端交替，SSH -R 回环 TLS1.2 夹具，基址 https://localhost:18474 覆盖 DNS worker 路径。中位数 k4tls 43.1 / 118.9 / 367.6 ms vs LuaSec 106.0 / 188.4 / 434.8 ms（约 2.5× / 1.6× / 1.2×）；p95 k4tls 56.7 / 186.9 / 389.2 vs 274.7 / 316.5 / 500.7。仍只代表受控夹具传输层，不构成 R4 业务验收。
+- 清理收尾：本机临时 CA 私钥与证书目录 /tmp/k4tls-https-r4 已删除，夹具进程已停；设备 core_pattern 复位为 core、luajit.wedged 与一次性探针已删。设备 /tmp/k4tls-check-XXpa5MtW 测试环境保留待 R4/K4 复用；/mnt/us/k4weread/launch.flag 未动（v8.4 上惰性，留待插件升级处理）。
+- 期间设备曾掉线（休眠/USB 导出），DHCP 漂移 .157↔.151；用户唤醒后恢复。
