@@ -1,0 +1,15 @@
+# K4 双产物交叉配置（事实依据：K4 用户态 armel glibc 2.12.1，见
+# ~/work/k4refresh/.cargo/config.toml 与 K4weread 评估报告 §一）。
+#
+# 1) k4tls-bench CLI → armv7-musleabihf 静态（k4refresh v0.1.10 真机验证路径，
+#    SSH/KUAL 独立运行）。
+# 2) libk4tls.so（FFI）→ arm-unknown-linux-gnueabi 动态 glibc：KOReader K4 的
+#    luajit 以 dlopen 加载 .so，宿主用户态 armel——musl 静态 cdylib dlopen 进
+#    glibc 进程属未验证路径，故 .so 沿 koreader 自身库的同源 ABI（armel glibc）。
+#    交叉 gcc = ~/x-tools/arm-kindle5-linux-gnueabi（koxtoolchain 产物，soft-float）。
+[target.armv7-unknown-linux-musleabihf]
+linker = "rust-lld"
+rustflags = ["-C", "linker-flavor=ld.lld", "-C", "link-self-contained=yes"]
+
+[target.arm-unknown-linux-gnueabi]
+linker = "arm-kindle5-linux-gnueabi-gcc"

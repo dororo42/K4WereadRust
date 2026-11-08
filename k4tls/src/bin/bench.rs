@@ -125,7 +125,7 @@ fn main() {
     println!("{}", stats.report());
 }
 
-fn cstr(s: &str) -> *const i8 {
+fn cstr(s: &str) -> *const libc::c_char {
     // bench 进程生命周期覆盖请求，泄漏无碍
     std::ffi::CString::new(s).unwrap().into_raw()
 }
