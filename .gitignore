@@ -1,0 +1,7 @@
+handoffs/
+target/
+*.local.md
+.env
+.env.*
+__pycache__/
+*.pyc
