@@ -31,7 +31,7 @@ K4weread Phase 1 工程仓（评估报告 §七 分期）：**无 fork 的 Rust 
 ## Current Handoff
 
 - Latest: `handoffs/2026-11-08-181521-k4wereadrust-phase1/HANDOFF.md`（文末含 2026-11-08 晚间追加：K5 实测结局与更正，以其为准）
-- Branch: main @ db4a4fa（另有大量未提交修复，两仓均未 commit）
-- Status: K5 临时目录传输链全绿（-joff）；R4 业务基准、K4 真机、瘦身部署、commit/push 均待条件或授权
+- Branch: main @ e7ea207（68a5e48 传输硬化 / 3c48aa4 瘦身守卫 / e7ea207 夹具与文档；主仓无远端仅本地提交）
+- Status: K5 临时目录传输链全绿（-joff）、KUAL 扩展已装 K5；R4 业务基准、K4 真机、瘦身部署、翻闸/发版待条件或授权
 
 任何 agent 开始工作前，先读上面的 HANDOFF.md。这份指针由 orbital_handoff 维护，手工交接时请同步更新。
