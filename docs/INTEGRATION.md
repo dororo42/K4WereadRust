@@ -1,7 +1,7 @@
 # P1-A 集成指南：k4tls 接入 weread_K4.koplugin
 
-状态：**组件就绪，集成补丁待应用**。真机 bench（R4）通过前默认后端 = LuaSec，
-设备行为与 v9.7 完全一致；本指南给出全部落地件。
+状态：**插件仓已接线，尚未通过 R4 业务验收**。默认后端保持 LuaSec；
+仅在独立测试进程显式选择 k4tls，不因部署库文件自动启用。K5 的测试结果不替代 K4 验收。
 
 ## 架构
 
@@ -17,7 +17,7 @@ client.lua (weread_K4.koplugin)
 - 语义对齐（R2）：k4tls 适配层把 C ABI 错误码映射到 client.lua 既有分类词表——
   `-13`→timeout（F-21 语义：不重试）、`-11`→connection refused、`-10`→host or
   service not provided（ipv4_dns 解析类单次重试）、`-15/-14`→closed（F-23 瞬态
-  单次重试）、`-16`→原样 raise "binary response exceeds the N-byte limit"（N-1 有界 sink 同形）。
+  单次重试）、`-16`→`(nil, "binary response exceeds the N-byte limit")`（由 client 统一抛错）。
 - 超时注入：client.lua 现有 block/total 秒值 ×1000 传入 C ABI；luasocket 路径忽略新字段。
 
 ## client.lua 补丁（唯一 diff）
@@ -35,7 +35,9 @@ req_opts.transport_max_bytes = max_bytes
 results = { pcall(transport.request, req_opts) }
 ```
 
-`http` 局部变量保留（transport 回退路径仍用它）；`req_opts.max_bytes` 剥离逻辑不变。
+`client.lua` 不再需要 `http` 局部变量；LuaSec 回退由 transport 模块负责。
+`req_opts.max_bytes` 剥离逻辑不变。有界 sink 接受结束标记 `nil` 并返回 `1`；
+所有传输失败必须返回 `(nil, err)`，不能返回 `(1, nil, err)`，否则会绕过既有重试分类。
 
 ## 文件放置（weread_K4.koplugin 仓）
 
@@ -60,14 +62,15 @@ client_redirect_spec.lua 的 preload 模式处理；纯函数测映射，select 
 - 环境变量 `WEREAD_TLS_BACKEND=k4tls`（KUAL 脚本/KOReader 环境注入），或
 - `weread/lib/transport.lua` 的 `M.backend` 改为 `"k4tls"`（设备 settings.reader.lua
   层面的持久开关可在插件 settings 模块加一项，二阶段做）。
-- 缺省 `"auto"`：libk4tls.so 不可加载 → 自动 LuaSec。
+- 缺省 `"luasec"`；未知值同样回到 LuaSec。显式 `"auto"` 或 `"k4tls"` 才尝试加载候选库。
+- 回滚必须显式设置 `WEREAD_TLS_BACKEND=luasec`；`auto` 不是回滚开关。
 
 ## 构建产物（k4tls/build.sh）
 
 | 产物 | target | 用途 | 状态 |
 |---|---|---|---|
-| `k4tls-bench` | armv7-unknown-linux-musleabihf 静态 | SSH/KUAL 跑真机 TLS 基准（R4 先决件） | ✅ 1.1M 全静态 |
-| `libk4tls.so` | arm-unknown-linux-gnueabi 动态（kindle5 交叉 gcc） | KOReader luajit FFI dlopen | 需 rustup armel std + 真机验证 dlopen |
+| `k4tls-bench` | armv7-unknown-linux-musleabihf 静态 | SSH/KUAL 跑真机 TLS 基准（R4 先决件） | K5 可执行；公开测试 URL 返回 500，不是成功基准样本 |
+| `libk4tls.so` | arm-unknown-linux-gnueabi 动态（kindle5 交叉 gcc） | KOReader luajit FFI dlopen | K5 glibc 2.12.1 已通过加载与版本调用，K4 待验 |
 
 **为什么 .so 不用 musl 静态**：K4 用户态 armel glibc 2.12（k4refresh .cargo/config.toml
 记录 + 评估报告 §一 libcrypto armel）；musl 静态 cdylib dlopen 进 glibc 宿主进程
@@ -76,9 +79,46 @@ client_redirect_spec.lua 的 preload 模式处理；纯函数测映射，select 
 
 ## 真机验收清单（设备在线后）
 
-1. `k4tls-bench --url https://weread.qq.com/web/ --n 20` —— R4 bench：
-   均值/中位数与 LuaSec 路径（改造前的 sync 8s 基线）对比；**性能持平即换**。
-2. 部署 libk4tls.so + 两 lua 文件 + client.lua 补丁，`WEREAD_TLS_BACKEND=k4tls`：
-   B-3 mock 网关全模式（slow/drop/empty）跑 client spec。
-3. 开关回 `auto`（luasec）回归：v9.7 行为零变化。
-4. crash.log 监控：FFI 段不得出现新栈（catch_unwind -99 会在 err 字段可见）。
+1. 先在设备临时目录加载库并调用版本，再发真实请求。GLIBC 版本号合格不能证明可加载：
+   原产物的无版本强依赖 `getauxval` 已在 K5 失败；现在用受限 ARM/glibc 包装读取 `/proc/self/auxv`，
+   构建加入 `-z defs` 拒绝缺失强符号。不得部署替换系统 libc。
+2. R4 使用相同设备、URL/请求头/请求体、证书验证、超时及负载交替测试两个后端，记录成功率、正文校验、
+   均值/中位数/p95。单个 GET 不能与完整同步流程的 8 秒比较；HTTP 500 或只有失败的样本不通过 R4。
+3. 先在独立进程运行 `tools/device_transport_check.lua`，配合本机 `tools/tls_fixture.py`，
+   仅通过 SSH 反向转发访问回环 TLS 服务。测试 CA 只注入测试调用，绝不关闭证书验证或安装到系统。
+   该夹具检查正文含 NUL、chunked、interim、HEAD、304、空响应、500、断连、超时、限额及不可信 CA；
+   其耗时只代表受控 TLS1.2 夹具，不替代真实业务或 K4 的 R4 验收。
+4. B-3 原网关只提供 HTTP，不能直接宣称覆盖 k4tls 的 HTTPS 路径；本机 B-3 继续守护 LuaSec，
+   HTTPS 夹具是独立的传输回归。完整 client 业务集成仍需真实场景验收。
+5. 回滚开关为 `WEREAD_TLS_BACKEND=luasec`；默认保持 LuaSec，直到性能与业务回归均通过。
+6. 设备 UI、样式面板及故障日志的验收单独进行；独立 LuaJIT 进程测试不能代替正在运行的 KOReader UI。
+
+## 受控 TLS 夹具复现命令（K5 已验证，-joff）
+
+```sh
+# 1. 本机一次性证书（严格校验要求 CA 与叶子都带 keyUsage，缺一 Python3.14 拒绝）
+mkdir /tmp/k4tls-https && cd /tmp/k4tls-https
+openssl req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.pem -days 3 \
+  -subj "/CN=k4tls-test-ca" \
+  -addext "basicConstraints=critical,CA:TRUE" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign"
+openssl req -newkey rsa:2048 -nodes -keyout server.key -out server.csr -subj "/CN=localhost"
+printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:localhost,IP:127.0.0.1\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n' > leaf.ext
+openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial \
+  -out server.pem -days 3 -sha256 -extfile leaf.ext
+# 2. 本机夹具（仅绑定回环）+ 设备端 harness（经 SSH -R 反向转发，各自会话自持转发）
+python3 tools/tls_fixture.py --cert /tmp/k4tls-https/server.pem --key /tmp/k4tls-https/server.key &
+sshpass -p '' ssh -p 2222 -o ExitOnForwardFailure=yes -R 127.0.0.1:18474:127.0.0.1:18474 \
+  root@192.168.2.157 \
+  'cd /mnt/us/koreader && ./luajit -joff /tmp/k4tls-check-*/tools/device_transport_check.lua \
+   /tmp/k4tls-check-*/lua https://localhost:18474 /tmp/k4tls-check-*/ca.pem 10'
+```
+
+- 基址用 `https://localhost`（非 127.0.0.1）才会经过 k4tls 的 DNS worker 路径；证书 SAN 已含 `DNS:localhost`。
+- 设备侧独立进程验证**必须 `-joff`**：该设备 KOReader 补丁版 LuaJIT 在 JIT-on 下纯启动可段错误（与本组件无关，见 LOG.md 同日记录），正式 KOReader 应用内的 k4tls 行为需单独验收。
+- 设备端长跑命令包 `timeout`；终止本地 ssh 前先确认远端进程已退出，避免残留进程占满单核设备（本轮实录：泄漏进程 6:40 CPU 致后续诊断失真）。
+
+## 结论边界（2026-11-08 K5）
+
+- 已验证：armel .so 在 glibc 2.12.1 LuaJIT 的 dlopen、FFI 往返、全部传输失败路径语义、限额/超时/证书校验、持久 DNS worker 生命周期（nodelete）、-joff 下约 470 请求零失败。
+- 未验证：R4 正式业务基准（weread 真实负载双后端对比）、K4 真机、KOReader 应用内（JIT 与 UI）行为、瘦身部署。

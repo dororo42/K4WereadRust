@@ -6,14 +6,14 @@ K4weread Phase 1 工程仓。上游评估：`~/reports/K4weread激进形态评�
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| **k4tls**（P1-A） | ✅ 组件就绪 / ⏳ 设备 bench | rustls 静态传输组件：C ABI + LuaJIT FFI 替换 weread client.lua 的 LuaSec/OpenSSL 传输层。rustls+ring+webpki-roots 零系统依赖；28 host 测试 + 375 插件 spec 全绿；已"接线不翻闸"（默认 LuaSec，`WEREAD_TLS_BACKEND=k4tls` 启用，R4 bench 通过前不翻默认） |
-| **配置级瘦身**（P1-B） | ✅ 工具就绪 / ⏳ 真机核对 | 插件 35→3 + 字体裁剪，纯打包层不改代码；176.3M→预期 ~115-120M（S1 范围诚实校准） |
+| **k4tls**（P1-A） | K5 临时目录实测推进中；R4 未验收 | Rustls C ABI + LuaJIT FFI；bench 为 musl 静态件，FFI 库依赖 armel glibc。修复未版本化的 getauxval 缺失后 K5 已能加载；默认明确为 LuaSec，只有显式选择才尝试 k4tls。测试数量与验收范围以 LOG.md 最新记录为准。 |
+| **配置级瘦身**（P1-B） | 安全守卫已补；设备部署未验收 | 纯打包层不改源树。现有白名单不匹配 K5 字体，不能部署；报告中的 K4 体积预期不可直接套用 K5。 |
 
 ## 快速上手
 
 ```sh
 # k4tls（host 测试 + 交叉构建）
-cd k4tls && cargo test && ./build.sh          # bench(musl 静态) + .so(armel glibc)
+(cd k4tls && cargo test && ./build.sh)        # bench(musl 静态) + .so(armel glibc)
 
 # Lua 绑定纯函数测试
 lua tools/test_k4tls_lua.lua
