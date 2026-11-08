@@ -30,6 +30,8 @@ K4weread Phase 1 工程仓（评估报告 §七 分期）：**无 fork 的 Rust 
 
 ## Current Handoff
 
-- （待第一批次结束 CREATE 后由 orbital_handoff 填写）
+- Latest: `handoffs/2026-11-08-181521-k4wereadrust-phase1/HANDOFF.md`
+- Branch: main @ 2cc4e32
+- Status: Phase 1 本机工程完成；设备侧（bench/dlopen/瘦身部署）等设备在线
 
-任何 agent 开始工作前，先读上面的 HANDOFF.md。
+任何 agent 开始工作前，先读上面的 HANDOFF.md。这份指针由 orbital_handoff 维护，手工交接时请同步更新。
