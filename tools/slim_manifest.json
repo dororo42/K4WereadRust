@@ -1,0 +1,15 @@
+{
+  "_comment": "K4weread Phase 1 配置级瘦身清单（评估报告 §二 S1 / §3.1）。纯打包层：只影响 slim 副本，绝不改源树。插件保留=报告 §3.1（hotkeys + weread + k4refresh 可选）；字体保留=1 CJK + 1 西文族。名称以真机枚举为准：在设备/拉取树上跑 --list-plugins / --list-fonts 核对后修订本清单。",
+  "keep_plugins": [
+    "hotkeys.koplugin",
+    "weread_K4.koplugin",
+    "k4refresh.koplugin"
+  ],
+  "keep_fonts": [
+    "droid/DroidSansFallback.ttf",
+    "freefont/FreeSans.ttf",
+    "freefont/FreeSansBold.ttf",
+    "freefont/FreeSerif.ttf"
+  ],
+  "keep_fonts_comment": "默认保留 KOReader 内建 CJK 回退（DroidSansFallback）+ FreeSans/FreeSerif 西文族。真机核对项：weread 样式面板当前使用的正文字体名（doc_settings 持久化的 font_family）必须在保留集内，否则阅读样式回退默认字体。"
+}
