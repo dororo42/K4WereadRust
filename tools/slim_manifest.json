@@ -1,15 +1,23 @@
 {
-  "_comment": "K4weread Phase 1 配置级瘦身清单（评估报告 §二 S1 / §3.1）。纯打包层：只影响 slim 副本，绝不改源树。插件保留=报告 §3.1（hotkeys + weread + k4refresh 可选）；字体保留=1 CJK + 1 西文族。名称以真机枚举为准：在设备/拉取树上跑 --list-plugins / --list-fonts 核对后修订本清单。",
+  "_comment": "K4weread Phase 1 配置级瘦身清单（评估报告 §二 S1 / §3.1）。纯打包层：只影响 slim 副本，绝不改源树。2026-11-08 按 K5 树实测修订：K5 无 DroidSansFallback/FreeSansBold，CJK 为 noto/NotoSansCJKsc-Regular.otf；weread 设置与书籍 sdr 均未发现自定义字体键 → 保留 KOReader 默认 Noto Sans 族 + mono + symbols + 各保留字体许可证。插件在报告 §3.1 三项基础上保留 SSH.koplugin（远程恢复入口，禁止移除）。部署前需用户确认。",
   "keep_plugins": [
     "hotkeys.koplugin",
     "weread_K4.koplugin",
-    "k4refresh.koplugin"
+    "k4refresh.koplugin",
+    "SSH.koplugin"
   ],
   "keep_fonts": [
-    "droid/DroidSansFallback.ttf",
-    "freefont/FreeSans.ttf",
-    "freefont/FreeSansBold.ttf",
-    "freefont/FreeSerif.ttf"
+    "noto/NotoSansCJKsc-Regular.otf",
+    "noto/NotoSans-Regular.ttf",
+    "noto/NotoSans-Bold.ttf",
+    "noto/NotoSans-Italic.ttf",
+    "noto/NotoSans-BoldItalic.ttf",
+    "noto/LICENSE",
+    "droid/DroidSansMono.ttf",
+    "droid/NOTICE",
+    "nerdfonts/symbols.ttf",
+    "nerdfonts/LICENSE",
+    "README.md"
   ],
-  "keep_fonts_comment": "默认保留 KOReader 内建 CJK 回退（DroidSansFallback）+ FreeSans/FreeSerif 西文族。真机核对项：weread 样式面板当前使用的正文字体名（doc_settings 持久化的 font_family）必须在保留集内，否则阅读样式回退默认字体。"
+  "keep_fonts_comment": "K5 树 25168KiB 字体中保留约 18400KiB（CJK 15.7M 占大头）；放弃 freefont/urw/NotoSerif/阿拉伯文/孟加拉文/天城文族 ≈ 省 6.8M。插件 4104KiB 保留约 1.5M ≈ 省 2.6M。S1 在 K5 树真实节省约 9.4M（65.7M → ~56M，~14%），远小于 K4 基线（176M 树）推导的 115-120M——属不同设备/版本基线，不可混用。"
 }

@@ -33,6 +33,6 @@ K4weread Phase 1 工程仓（评估报告 §七 分期）：**无 fork 的 Rust 
 - Latest: `handoffs/2026-11-08-181521-k4wereadrust-phase1/HANDOFF.md`（文末含 2026-11-08 晚间追加：K5 实测结局与更正，以其为准）
 - Remote: https://github.com/dororo42/K4WereadRust（public，main 已推 origin）
 - Branch: main（68a5e48 传输硬化 / 3c48aa4 瘦身守卫 / e7ea207 夹具与文档 / bb24b19 基准工具；后续提交见 GH）
-- Status: K5 传输链全绿 + 受控负载基准完成（k4tls 中位 43.1/118.9/367.6 ms vs LuaSec 106.0/188.4/434.8 ms，16K/128K/512K，回环夹具非 R4）；设备端禁用 `timeout`、裸 luajit 需 LD_LIBRARY_PATH（见 INTEGRATION.md）；R4 业务基准、K4 真机、瘦身部署、翻闸/发版待条件或授权
+- Status: K5 传输链全绿 + R4 传输基准完成（真实 weread.qq.com，30/30，中位 k4tls 546.6 vs LuaSec 643.1 ms）+ 受控负载基准（2.5×/1.6×/1.2×）+ 瘦身 manifest K5 化（省 ~9.4M，未部署）；设备端禁用 `timeout`、裸 luajit 需 LD_LIBRARY_PATH（见 INTEGRATION.md）；待用户确认：slim 部署；K4 延后（用户决策）；插件集成/翻默认属后续阶段
 
 任何 agent 开始工作前，先读上面的 HANDOFF.md。这份指针由 orbital_handoff 维护，手工交接时请同步更新。

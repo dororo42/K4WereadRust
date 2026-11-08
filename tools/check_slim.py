@@ -65,8 +65,8 @@ def main(argv=None):
         ok = fail(f"keep font missing: {missing}")
     for extra in sorted(kept_font_files - keep_fonts):
         ok = fail(f"unexpected font: {extra}")
-    if not any("DroidSansFallback" in f for f in kept_font_files):
-        ok = fail("CJK fallback font (DroidSansFallback*) not in kept set — weread 正文/回退渲染会退化")
+    if not any("DroidSansFallback" in f or "NotoSansCJK" in f for f in kept_font_files):
+        ok = fail("CJK fallback font (DroidSansFallback*/NotoSansCJK*) not in kept set — weread 正文/回退渲染会退化")
 
     print(f"[{'PASS' if ok else 'FAIL'}] {tree}")
     return 0 if ok else 1

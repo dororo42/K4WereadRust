@@ -21,6 +21,10 @@
 现有 manifest **不能用于该 K5**；必须确认界面字体、当前正文字体及字体许可证保留集后单独调整，再核算真实节省量。
 设备还有 `SSH.koplugin`；未经确认不得按三插件白名单部署而移除远程恢复入口。本轮仅枚举和测量，没有裁剪或部署设备树。
 
+### K5 修订落地（2026-11-08 深夜）
+
+manifest 已按 K5 实测修订：CJK=`noto/NotoSansCJKsc-Regular.otf`，西文=KOReader 默认 Noto Sans 族（4 文件），另留 mono/symbols 与各保留字体许可证（OFL NOTICE/LICENSE 不丢）；插件白名单加 `SSH.koplugin`（远程恢复入口）。设备 weread 设置与书籍 sdr 均未发现自定义字体键，故按 KOReader 默认字族保留。check_slim 门禁同步接受 `NotoSansCJK*`（RED→GREEN，test_slim 11/11）。**K5 树真实节省估算 ≈ 9.4 MiB（65.7M → ~56M，~14%）**：字体省 ~6.8M、插件省 ~2.6M——K5 树本身只有 64M，与 K4 基线（176M 树）的 115-120M 预期不可混用。实际部署（替换设备树）仍需用户确认。
+
 ## 工具
 
 - `tools/slim_koreader.py`：源树 → 精简副本。幂等、永不写源树、产物带 `SLIM_REPORT.json`。

@@ -28,13 +28,18 @@ def build_fake_tree(root):
     touch("frontend/apps/reader/readerui.lua")
     touch("frontend/apps/filemanager/filemanager.lua")
     for plug in ("hotkeys.koplugin", "weread_K4.koplugin", "k4refresh.koplugin",
-                 "opds.koplugin", "wallabag.koplugin", "newsdownloader.koplugin",
+                 "SSH.koplugin", "opds.koplugin", "wallabag.koplugin", "newsdownloader.koplugin",
                  "texteditor.koplugin", "cloudstorage.koplugin"):
         touch(f"plugins/{plug}/main.lua")
     for font in ("droid/DroidSansFallback.ttf", "droid/DroidSansFallbackBold.ttf",
                  "freefont/FreeSans.ttf", "freefont/FreeSansBold.ttf",
                  "freefont/FreeSerif.ttf", "noto/NotoSansArabic-Regular.ttf",
-                 "noto/NotoSansHebrew-Regular.ttf", "custom/ReadingSerif.otf"):
+                 "noto/NotoSansHebrew-Regular.ttf", "custom/ReadingSerif.otf",
+                 "noto/NotoSansCJKsc-Regular.otf", "noto/NotoSans-Regular.ttf",
+                 "noto/NotoSans-Bold.ttf", "noto/NotoSans-Italic.ttf",
+                 "noto/NotoSans-BoldItalic.ttf", "noto/LICENSE",
+                 "droid/DroidSansMono.ttf", "droid/NOTICE",
+                 "nerdfonts/symbols.ttf", "nerdfonts/LICENSE", "README.md"):
         touch(f"fonts/{font}", 4096)
 
 
@@ -97,13 +102,18 @@ def main():
         out = r.stdout
         assert "excluded 5 (expected 5)" in out, f"plugin exclusion count wrong: {out}"
 
-        for keep in ("hotkeys.koplugin", "weread_K4.koplugin", "k4refresh.koplugin"):
+        for keep in ("hotkeys.koplugin", "weread_K4.koplugin", "k4refresh.koplugin", "SSH.koplugin"):
             assert os.path.isfile(os.path.join(dst, "plugins", keep, "main.lua")), f"missing keep plugin {keep}"
         for gone in ("opds.koplugin", "wallabag.koplugin", "newsdownloader.koplugin",
                      "texteditor.koplugin", "cloudstorage.koplugin"):
             assert not os.path.exists(os.path.join(dst, "plugins", gone)), f"excluded plugin leaked: {gone}"
-        assert os.path.isfile(os.path.join(dst, "fonts", "droid", "DroidSansFallback.ttf"))
-        assert not os.path.exists(os.path.join(dst, "fonts", "noto")), "non-kept font dir leaked"
+        for keep in ("noto/NotoSansCJKsc-Regular.otf", "noto/NotoSans-Regular.ttf", "noto/LICENSE",
+                     "droid/DroidSansMono.ttf", "nerdfonts/symbols.ttf", "README.md"):
+            assert os.path.isfile(os.path.join(dst, "fonts", keep)), f"missing keep font {keep}"
+        for gone in ("freefont", "custom"):
+            assert not os.path.exists(os.path.join(dst, "fonts", gone)), f"excluded font dir leaked: {gone}"
+        assert not os.path.isfile(os.path.join(dst, "fonts", "noto", "NotoSansHebrew-Regular.ttf")), \
+            "excluded noto font leaked"
 
         src_size = sum(os.path.getsize(os.path.join(r_, f)) for r_, _, fs in os.walk(src) for f in fs)
         dst_size = sum(os.path.getsize(os.path.join(r_, f)) for r_, _, fs in os.walk(dst) for f in fs)
@@ -281,6 +291,18 @@ class SlimTests(unittest.TestCase):
             with open(path, "wb") as fh:
                 fh.write(b"not a plugin directory")
             self.assert_read_only_run(tmp, [CHECK, dst, "--manifest", manifest_path])
+
+    def test_check_accepts_k5_noto_cjk(self):
+        # K5 树的 CJK 回退是 NotoSansCJKsc（无 DroidSansFallback）；门禁必须接受该形态。
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dst, manifest_path, _manifest = make_fixture(tmp)
+            manifest = {
+                "keep_plugins": ["hotkeys.koplugin", "weread_K4.koplugin", "k4refresh.koplugin"],
+                "keep_fonts": ["noto/NotoSansCJKsc-Regular.otf", "noto/NotoSans-Regular.ttf"],
+            }
+            write_manifest(manifest_path, manifest)
+            self.assert_slim(src, dst, manifest_path)
+            self.assert_read_only_run(tmp, [CHECK, dst, "--manifest", manifest_path], success=True)
 
 
 if __name__ == "__main__":

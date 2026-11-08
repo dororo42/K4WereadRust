@@ -80,3 +80,10 @@
 - **K5 可控负载基准完成**（RC=0，90/90 正文等长校验通过，无残留进程）：16KiB/128KiB/512KiB × 15 样本 × 双后端交替，SSH -R 回环 TLS1.2 夹具，基址 https://localhost:18474 覆盖 DNS worker 路径。中位数 k4tls 43.1 / 118.9 / 367.6 ms vs LuaSec 106.0 / 188.4 / 434.8 ms（约 2.5× / 1.6× / 1.2×）；p95 k4tls 56.7 / 186.9 / 389.2 vs 274.7 / 316.5 / 500.7。仍只代表受控夹具传输层，不构成 R4 业务验收。
 - 清理收尾：本机临时 CA 私钥与证书目录 /tmp/k4tls-https-r4 已删除，夹具进程已停；设备 core_pattern 复位为 core、luajit.wedged 与一次性探针已删。设备 /tmp/k4tls-check-XXpa5MtW 测试环境保留待 R4/K4 复用；/mnt/us/k4weread/launch.flag 未动（v8.4 上惰性，留待插件升级处理）。
 - 期间设备曾掉线（休眠/USB 导出），DHCP 漂移 .157↔.151；用户唤醒后恢复。
+
+## 2026-11-08 23:20 — 下一阶段：R4 传输基准完成 + 瘦身清单 K5 化（K4 延后，用户决策）
+
+- 用户决策：按 K5 现有结果进入下一阶段，K4 真机延后。
+- **R4 传输基准（真实端点，完成）**：tools/device_r4_check.lua 新增——weread.qq.com/web/ 未认证 GET、双后端交替 15×2、真实 DigiCert 链注入（leaf+intermediate+DigiCert Global Root G2，本机 openssl s_client 提取并 verify OK，未动设备系统 CA）、真域名走 DNS worker 路径、浏览器级 UA（取自插件 protocol.lua 的 WeRead.USER_AGENT）。结果：**30/30 成功、正文等长 525,412 字节**；中位 k4tls 546.6 ms vs LuaSec 643.1 ms（快 ~15%），均值 574.4 vs 672.6，p95 800.1 vs 866.1。此前静态 bench CLI 的 HTTP 500 系请求头形态问题（补浏览器 UA 后 200）。边界：这是真实端点传输层对比；完整同步业务验收（登录态全流程）仍属后续集成阶段。
+- **瘦身清单 K5 化（完成，未部署）**：slim_manifest.json 按 K5 实测修订——keep_plugins 增 SSH.koplugin（远程恢复入口禁止移除）；keep_fonts 改逐文件白名单（CJK=NotoSansCJKsc-Regular.otf + KOReader 默认 Noto Sans 族 4 文件 + DroidSansMono + nerdfonts/symbols + README + 各保留字体许可证）。check_slim 门禁原硬编码 DroidSansFallback，先加 RED 测试（K5 NotoSansCJKsc 树过门禁）再修为接受 DroidSansFallback*/NotoSansCJK*；test_slim.py 合成树同步 K5 形态（含 main() 烟测断言翻转），**11/11 全绿**。K5 真实节省估算 ≈9.4 MiB（65.7M→~56M）：字体省 ~6.8M（弃 freefont/urw/NotoSerif/阿拉伯文/孟加拉文/天城文）、插件省 ~2.6M；K4 基线的 115-120M 预期与 K5 树不可比。实际替换设备树仍待用户确认。
+- 设备实测补充：字体 25168KiB 构成（noto 20.6M 含 CJK 16M、freefont 2.8M、urw 0.8M、nerdfonts 0.8M、droid 0.1M）；插件 39 个共 4104KiB（weread_K4 1232KiB 最大）；weread.lua 设置与书籍 sdr 均无自定义字体键。
