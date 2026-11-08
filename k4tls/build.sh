@@ -13,6 +13,12 @@
 #   - armel 交叉 gcc: ~/x-tools/arm-kindle5-linux-gnueabi/（koxtoolchain 产物）
 set -e
 
+# 非交互/后台 shell 的 PATH 可能缺 ~/.cargo/bin（rustup/cargo 所在）。
+case ":$PATH:" in
+  *":$HOME/.cargo/bin:"*) ;;
+  *) export PATH="$HOME/.cargo/bin:$PATH" ;;
+esac
+
 TARGET_MUSL="armv7-unknown-linux-musleabihf"
 TARGET_ARMEL="arm-unknown-linux-gnueabi"
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -28,8 +34,10 @@ build_bench() {
         echo "  mkdir -p ~/x-tools && cd ~/x-tools && curl -x http://192.168.2.153:16492 -LO https://musl.cc/arm-linux-musleabihf-cross.tgz && tar xzf arm-linux-musleabihf-cross.tgz" >&2
         exit 3
     fi
-    export CC_"$(echo "$TARGET_MUSL" | tr 'a-z-' 'A-Z_')"="$CC_MUSL"
-    export AR_"$(echo "$TARGET_MUSL" | tr 'a-z-' 'A-Z_')"="${CC_MUSL%-gcc}-ar"
+    # cc-rs 1.11+ 只读小写形式：CC_<target_with_underscores>（大写形式不被识别，
+    # 早期 build.sh 用 tr 转大写导致 cc-rs 静默回落默认交叉前缀搜索）。
+    export CC_armv7_unknown_linux_musleabihf="$CC_MUSL"
+    export AR_armv7_unknown_linux_musleabihf="${CC_MUSL%-gcc}-ar"
     cargo build --release --target "$TARGET_MUSL"
     echo "bench 产物:"
     file "target/$TARGET_MUSL/release/k4tls-bench" | sed 's/^/  /'
@@ -42,8 +50,8 @@ build_so() {
         echo "[build.sh] 缺 armel 交叉 gcc（~/x-tools/arm-kindle5-linux-gnueabi）" >&2
         exit 3
     fi
-    export CC_"$(echo "$TARGET_ARMEL" | tr 'a-z-' 'A-Z_')"="$CC_ARMEL"
-    export AR_"$(echo "$TARGET_ARMEL" | tr 'a-z-' 'A-Z_')"="${CC_ARMEL%-gcc}-ar"
+    export CC_arm_unknown_linux_gnueabi="$CC_ARMEL"
+    export AR_arm_unknown_linux_gnueabi="${CC_ARMEL%-gcc}-ar"
     cargo build --release --target "$TARGET_ARMEL" --lib
     echo "so 产物:"
     file "target/$TARGET_ARMEL/release/libk4tls.so" | sed 's/^/  /'

@@ -37,3 +37,10 @@
 
 - armel std 下载中（rustup 走代理慢）→ libk4tls.so 交叉构建待其完成（后台任务）。
 - 设备侧全部 blocked：k4tls-bench 真机 R4 bench、libk4tls.so dlopen 验证、瘦身清单真机核对与部署（设备间歇在线）。
+
+## 2026-11-08 19:05 — P1-A libk4tls.so armel 交叉构建打通（本机侧收官）
+
+- 动作：build.sh 修正 + .cargo/config.toml 链接器全路径，`./build.sh` 双产物线全绿；so 产物 target/arm-unknown-linux-gnueabi/release/libk4tls.so（ARM EABI5 动态库，1.1M，stripped）。
+- 根因（三个都看代码看不出来）：① cc-rs 1.11+ 只读小写目标变量 `CC_arm_unknown_linux_gnueabi`，原 `tr` 转大写导出的 CC_ARM_UNKNOWN_LINUX_GNUEABI 从未被读（musl 线当时能成是 shell 里恰有小写导出，ring 构建日志实证）；② kindle5 工具链不在 PATH，裸名链接器令 cargo 链接阶段报 cc-rs 找不到 gcc；③ 后台 shell 缺 ~/.cargo/bin，rustup 静默失败被 `|| true` 吞掉后 cargo 报缺 std——build.sh 现自补 PATH。
+- 验收：nm -D 导出 k4tls_perform/k4tls_free_response/k4tls_version 三符号；objdump 符号版本需求仅 GLIBC_2.4（≤ K4 基线 2.12，dlopen 无版本风险）；NEEDED 全为 armel glibc 标准件（libc/ld-linux/librt/libpthread/libgcc_s/libdl）。链接期 accept4 警告属 std accept 路径，k4tls 不引用（链接器 GC 剥离），良性。
+- 剩余：设备侧三项仍 blocked（R4 bench、dlopen 探针 + mock 网关、瘦身清单核对部署），等设备在线。

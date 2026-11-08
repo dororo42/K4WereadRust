@@ -12,4 +12,5 @@ linker = "rust-lld"
 rustflags = ["-C", "linker-flavor=ld.lld", "-C", "link-self-contained=yes"]
 
 [target.arm-unknown-linux-gnueabi]
-linker = "arm-kindle5-linux-gnueabi-gcc"
+# 全路径：工具链不在 PATH 上，裸名会导致 cargo 链接阶段找不到 gcc。
+linker = "/home/doro/x-tools/arm-kindle5-linux-gnueabi/bin/arm-kindle5-linux-gnueabi-gcc"
