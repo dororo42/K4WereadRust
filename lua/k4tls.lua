@@ -19,8 +19,6 @@ local M = {
     _loaded = false,
 }
 
-local TRANSIENT_PREFIX = false
-
 -- ---------------------------------------------------------------------------
 -- 纯函数：错误码 → luasocket 语义文本（client.lua 重试分类的词表见
 -- plugin_util.TRANSIENT_TRANSPORT_PATTERNS 与 ipv4_dns.RESOLUTION_ERROR_PATTERNS）
@@ -133,7 +131,7 @@ local function cdef(ffi)
 end
 
 -- 尝试加载 libk4tls.so；成功返回句柄，失败返回 nil + 原因。
--- 搜索路径：LUAPATH 同目录（KOReader plugin 包内）→ ffi.load 默认路径。
+-- 搜索路径：模块同目录（KOReader plugin 包内）→ ffi.load 默认路径。
 function M._load(ffi)
     if M._lib then return M._lib end
     local search = { "k4tls" }
@@ -145,6 +143,7 @@ function M._load(ffi)
     for _i, name in ipairs(search) do
         local ok, handle = pcall(ffi.load, name)
         if ok and handle then
+            cdef(ffi)
             return handle
         end
     end

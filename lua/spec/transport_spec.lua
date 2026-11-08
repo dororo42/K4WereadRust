@@ -18,9 +18,11 @@ describe("weread.lib.transport 后端选择", function()
         local transport = fresh()
         transport.backend = "bogus"
         -- auto 下 k4tls 是否可用取决于设备 .so；CI 无 ffi → 必然回退
-        local _backend, reason = transport.resolve()
+        local backend, reason = transport.resolve()
         if reason ~= "k4tls" then
             assert.equals("luasec-fallback", reason)
+        else
+            assert.is_not_nil(backend)
         end
     end)
 
