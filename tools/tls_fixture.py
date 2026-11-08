@@ -3,6 +3,7 @@ import argparse
 import socket
 import ssl
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -28,6 +29,24 @@ class Handler(BaseHTTPRequestHandler):
         status = 500 if self.path == "/error" else 304 if self.path == "/304" else 200
         if self.path == "/empty":
             body = b""
+        if self.path.startswith("/bench"):
+            parsed = urllib.parse.urlparse(self.path)
+            query = urllib.parse.parse_qs(parsed.query)
+            size = min(int(query.get("size", ["16384"])[0]), 4 * 1024 * 1024)
+            unit = '{"key":"值0123456789abcdef","items":[1,2,3],'.encode()
+            body = (unit * (size // len(unit) + 2))[:size]
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=UTF-8")
+            self.send_header("Connection", "close")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
+                pass
+            finally:
+                self.close_connection = True
+            return
         self.send_response(status)
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Connection", "close")
