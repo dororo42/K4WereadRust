@@ -87,3 +87,34 @@
 - **R4 传输基准（真实端点，完成）**：tools/device_r4_check.lua 新增——weread.qq.com/web/ 未认证 GET、双后端交替 15×2、真实 DigiCert 链注入（leaf+intermediate+DigiCert Global Root G2，本机 openssl s_client 提取并 verify OK，未动设备系统 CA）、真域名走 DNS worker 路径、浏览器级 UA（取自插件 protocol.lua 的 WeRead.USER_AGENT）。结果：**30/30 成功、正文等长 525,412 字节**；中位 k4tls 546.6 ms vs LuaSec 643.1 ms（快 ~15%），均值 574.4 vs 672.6，p95 800.1 vs 866.1。此前静态 bench CLI 的 HTTP 500 系请求头形态问题（补浏览器 UA 后 200）。边界：这是真实端点传输层对比；完整同步业务验收（登录态全流程）仍属后续集成阶段。
 - **瘦身清单 K5 化（完成，未部署）**：slim_manifest.json 按 K5 实测修订——keep_plugins 增 SSH.koplugin（远程恢复入口禁止移除）；keep_fonts 改逐文件白名单（CJK=NotoSansCJKsc-Regular.otf + KOReader 默认 Noto Sans 族 4 文件 + DroidSansMono + nerdfonts/symbols + README + 各保留字体许可证）。check_slim 门禁原硬编码 DroidSansFallback，先加 RED 测试（K5 NotoSansCJKsc 树过门禁）再修为接受 DroidSansFallback*/NotoSansCJK*；test_slim.py 合成树同步 K5 形态（含 main() 烟测断言翻转），**11/11 全绿**。K5 真实节省估算 ≈9.4 MiB（65.7M→~56M）：字体省 ~6.8M（弃 freefont/urw/NotoSerif/阿拉伯文/孟加拉文/天城文）、插件省 ~2.6M；K4 基线的 115-120M 预期与 K5 树不可比。实际替换设备树仍待用户确认。
 - 设备实测补充：字体 25168KiB 构成（noto 20.6M 含 CJK 16M、freefont 2.8M、urw 0.8M、nerdfonts 0.8M、droid 0.1M）；插件 39 个共 4104KiB（weread_K4 1232KiB 最大）；weread.lua 设置与书籍 sdr 均无自定义字体键。
+
+## 2026-11-08 22:48 — slim 部署上线 K5（可回滚）+ FreeSans 字形修复（冒烟回归闭环）
+
+- 用户决策：先做 slim 部署，硬性要求可回滚；UI 冒烟通过后 commit/push。
+- 部署方式与文档流程的差异：未走 slim_koreader.py 本机构建+rsync，而是 `tools/k5_slim_deploy.sh` 设备侧四段式（dryrun/execute/rollback/status）——mv 原树→`koreader.pre-slim-20261108`（原子改名即完整备份）、`cp -dpR` 同树副本（settings/weread.credentials.lua 仅查存在未读内容，weread/cache 用户数据原样）、按 manifest 派生清单手术删除（35 插件+32 字体，dry-run 先行核对计数与逐项清单）。原因：FAT 树含用户数据不宜整树网络往返、设备无 rsync、busybox 无 cp -a。execute 内置护栏：KOReader 运行拒绝、/mnt/us 写保护拒绝（USB 导出检测）、cp 失败自动还原、verify 门禁（keep 集/luajit md5/无泄漏/用户数据在位/luajit 冒烟）。
+- 实测：95016→85536 KiB（-9.3M），VERIFY PASS；回滚=一条 `sh /tmp/k5_slim_deploy.sh rollback`（/tmp 重启即失，脚本可从仓内 tools/ 重传）。
+- 设备 busybox 1.7.2 陷阱（新增工具箱条目）：无 cp -a（用 -dpR）、无 nohup/setsid（`trap "" HUP`+重定向脱离 SSH 会话，防休眠断连杀死部署进程）、无 grep -E、head 无 -c、ps w 不显示参数（进程核查必须扫 /proc/*/stat 的 comm）、`pgrep -f koreader` 永远命中 dropbear 自身（argv0=/mnt/us/koreader/dropbear）→ 设备侧 koreader 检测必须 comm 级匹配，部署脚本护栏已从 pgrep 改 comm 扫描。
+- SSH 判定（用户问询）：KOReader 退出不断 SSH——dropbear 二进制虽在 KOReader 树内，但监听进程已 daemon 化（ppid=1），fork 服务连接不依赖磁盘文件；/etc/upstart 无 dropbear 单元，重启后 SSH 需经 KUAL 进一次 KOReader（SSH.koplugin 在保留白名单）拉起。本轮部署全程未重启。
+- 冒烟回归与修复：菜单 ▸/▼/→ 变方框。根因（crash.log freetype 报错实证）：KOReader UI 回退链用 `freefont/FreeSans.ttf` 渲染几何符号（menu.lua ▸、numberpickerwidget ▼、readersearch ▾、toc/creoptions →），NotoSansCJKsc 无 U+25B8。修复=从备份树恢复 FreeSans.ttf(906K)+COPYING（md5 对账一致），放弃逐文件改 ">" 方案（需动 6+ 处上游源码且重建精简树即失）；净省 ~8.6M（树 92968 KiB）。`cache/fontlist/fontinfo.dat` 过期缓存已清（防字体菜单列出已删字体）。manifest、部署脚本、test_slim.py 三处同步（FreeSans 进白名单），11/11 全绿。
+- crash.log 核实：无 crash——该文件是本构建的运行日志通道，会话 `Tearing down UIManager with exit code: 0` 干净结束；weread 全链路正常（QR 登录、书架同步 200 共 10157 本、时长上报成功）。"menu id not found: taps_and_gestures" 瘦身前已有 24 条，与部署无关（插件菜单挂接问题，留插件仓处理）。
+- 遗留：备份树 `/mnt/us/koreader.pre-slim-20261108` 保留待用户决定删除；launch.flag 未动；K4 真机延后（用户决策）。
+
+## 2026-11-08 23:55 — 双仓更新同步核查（借鉴评估）
+
+- 背景：用户提示 K4weread 与 weread_K4.koplugin 有更新需借鉴。核查插件仓 v9.8 发版后 3 提交（b82d7ed / 44958b6 / 366b1f9）与 K4weread v0.1.1 发版批次（f9c00a9 / d6864ea）。
+- 结论 1（核心）：插件仓 b82d7ed 已把 k4tls 绑定语义修复同步进 `weread/lib/k4tls.lua` + `transport.lua`，与本仓 `lua/` 副本 **diff 逐字节一致**——本仓无回移动作，唯一真源仍是本仓 `lua/`。
+- 结论 2（协调项）：插件 `client.lua` 的 k4tls 注释仍写"默认后端 auto"（d644920 初版旧文），与 transport.lua 实际语义（默认 luasec）不符；本仓对插件仓只读且有并行在制品，已记入 INTEGRATION.md 协调项，翻闸集成阶段一并修正。K4weread f9c00a9 的 LOG 已复核 b82d7ed 返回形状与 client.lua pcall 判定一致。
+- 结论 3（借鉴采纳）：K4weread v0.1.1 的跨仓契约护栏（check_marker_path --peer-repo 机器校验对端仓）模式可在本项目后续多仓集成时复用；366b1f9（QR 登录 Back 取消/Menu 退出）改善后续真机登录态验收操作（不再被迫等 300s 超时）。版本引用同步：AGENTS.md v9.7→v9.8、spec 护栏数 433→445；INTEGRATION.md 状态行更新（R4 传输基准已完成，登录态业务验收待集成阶段）。
+- 边界：未触碰插件仓与 K4weread 仓任何文件（只读核查）；未翻默认后端。
+
+## 2026-11-09 06:15 — 页脚/菜单“时间和电量之间”方框根因定谳 + FreeSerif 回补（第二轮字形修复）
+
+- 用户报告菜单“时间和电量之间”有方框问号。取证链（全部设备实测）：
+  1) readerfooter.lua 全量非 ASCII 码点提取 = 31 个（icons 前缀表 + 菜单行标签把每项图标嵌进文本）；
+  2) **裸 FFI FreeType 探针**（新方法：绕开此前 bare luajit 下 ffi/freetype.lua 的 loadlib 引导失败，直接 dlopen 设备 libfreetype，FT_Get_Char_Index 出覆盖矩阵）——四面（NotoSans/CJKsc/symbols.ttf/FreeSans）× 34 码点；
+  3) 结果：nerd 图标组（U+E790/EA5A/ECA8/ECA9/电池 E778-E783/EDA3）symbols.ttf 全部可用（⇒ 上一个疑点排除，回退链 [6] 位正常）；⇒/⁄⁄/⇄ CJKsc·FreeSans 兜底正常；**U+231A ⌚（时间）、U+23F3 ⏳、U+229B ⊛、U+291F/2920/293B/2956 四面全无覆盖**；
+  4) 对备份树 FreeSerif.ttf 复测：除 nerd PUA 段外全部有字形（含 💡 U+1F4A1）——**FreeSerif 是上游回退链 [8] 里 Misc-Symbols/Supplemental-Arrows 区的唯一提供者**，瘦身裁掉它后这些符号全变方框；crash.log 里 FreeSerif 回退加载报错正是链路在尝试它的痕迹。
+- 根因：slim manifest 首版只回补了 FreeSans（几何符号 ▸▼→），漏了 FreeSerif（Unicode 符号区字形）。用户看到的“时间和电量之间”方框 = 时间行/页脚时间项的 ⌚ U+231A（菜单“状态栏项目”行序：时间→章节进度→剩余页数→电量，时间行嵌字形恰在该区间）。
+- 修复（与 FreeSans 同法，纯增量可逆）：从备份树 cp FreeSerif.ttf（1862212B，md5 ddf0ad73fbf815212c8c9268dadbcaa2 对账一致）→ 清 cache/fontlist/fontinfo.dat。待用户重启 KOReader 冒烟。
+- 工具同步：slim_manifest.json keep_fonts+FreeSerif（comment 记两轮字形教训）、k5_slim_deploy.sh KEEP_FONTS 同步、test_slim.py keep/gone 断言翻转（FreeSansBold 仍排除），11/11 全绿。
+- 体积口径闭合：fonts 25168→21192 KiB（省 ~4.0M，含两轮回补 2.7M）、plugins 4104→1376 KiB（省 ~2.7M）→ 瘦身面净省 ≈6.7M；整树 du 96112 vs 备份 95016 反升 1.1M = weread 数据目录 8.4M（10157 本书架缓存，用户数据不属瘦身面）持续增长 + FAT du 噪声。**新发现（记录不动）：l10n 目录 18.9M 全语言翻译文件是未来瘦身候选**，不在已批准 manifest 范围，未经用户确认不裁。

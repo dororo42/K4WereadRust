@@ -33,7 +33,7 @@ def build_fake_tree(root):
         touch(f"plugins/{plug}/main.lua")
     for font in ("droid/DroidSansFallback.ttf", "droid/DroidSansFallbackBold.ttf",
                  "freefont/FreeSans.ttf", "freefont/FreeSansBold.ttf",
-                 "freefont/FreeSerif.ttf", "noto/NotoSansArabic-Regular.ttf",
+                 "freefont/FreeSerif.ttf", "freefont/COPYING", "noto/NotoSansArabic-Regular.ttf",
                  "noto/NotoSansHebrew-Regular.ttf", "custom/ReadingSerif.otf",
                  "noto/NotoSansCJKsc-Regular.otf", "noto/NotoSans-Regular.ttf",
                  "noto/NotoSans-Bold.ttf", "noto/NotoSans-Italic.ttf",
@@ -108,10 +108,13 @@ def main():
                      "texteditor.koplugin", "cloudstorage.koplugin"):
             assert not os.path.exists(os.path.join(dst, "plugins", gone)), f"excluded plugin leaked: {gone}"
         for keep in ("noto/NotoSansCJKsc-Regular.otf", "noto/NotoSans-Regular.ttf", "noto/LICENSE",
-                     "droid/DroidSansMono.ttf", "nerdfonts/symbols.ttf", "README.md"):
+                     "droid/DroidSansMono.ttf", "nerdfonts/symbols.ttf", "freefont/FreeSans.ttf",
+                     "freefont/FreeSerif.ttf", "freefont/COPYING", "README.md"):
             assert os.path.isfile(os.path.join(dst, "fonts", keep)), f"missing keep font {keep}"
-        for gone in ("freefont", "custom"):
+        for gone in ("custom",):
             assert not os.path.exists(os.path.join(dst, "fonts", gone)), f"excluded font dir leaked: {gone}"
+        for gone in ("freefont/FreeSansBold.ttf",):
+            assert not os.path.isfile(os.path.join(dst, "fonts", gone)), f"excluded font leaked: {gone}"
         assert not os.path.isfile(os.path.join(dst, "fonts", "noto", "NotoSansHebrew-Regular.ttf")), \
             "excluded noto font leaked"
 

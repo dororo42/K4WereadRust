@@ -1,7 +1,9 @@
 # P1-A 集成指南：k4tls 接入 weread_K4.koplugin
 
-状态：**插件仓已接线，尚未通过 R4 业务验收**。默认后端保持 LuaSec；
-仅在独立测试进程显式选择 k4tls，不因部署库文件自动启用。K5 的测试结果不替代 K4 验收。
+状态：**插件仓已接线；R4 传输基准已完成（2026-11-08 K5 真实端点 weread.qq.com
+30/30，中位 k4tls 546.6 vs LuaSec 643.1 ms），登录态完整业务验收待集成阶段**。
+默认后端保持 LuaSec；仅在独立测试进程显式选择 k4tls，不因部署库文件自动启用。
+K5 的测试结果不替代 K4 验收。
 
 ## 架构
 
@@ -64,6 +66,11 @@ client_redirect_spec.lua 的 preload 模式处理；纯函数测映射，select 
   层面的持久开关可在插件 settings 模块加一项，二阶段做）。
 - 缺省 `"luasec"`；未知值同样回到 LuaSec。显式 `"auto"` 或 `"k4tls"` 才尝试加载候选库。
 - 回滚必须显式设置 `WEREAD_TLS_BACKEND=luasec`；`auto` 不是回滚开关。
+
+> 协调项（2026-11-08 双仓同步核查）：插件仓 `weread/lib/client.lua` 中
+> "k4tls 传输" 注释仍写"默认后端 auto"——那是 d644920 初版设计的旧文；
+> b82d7ed 同步后的实际语义以 `transport.lua` 为准（默认 luasec）。该注释
+> 在插件仓（本仓只读，且有并行在制品），翻闸集成阶段一并修正。
 
 ## 构建产物（k4tls/build.sh）
 
