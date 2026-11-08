@@ -63,3 +63,12 @@
 - K5 JIT-on 独立进程段错误定性：与本组件无关。证据：`./luajit -e 'print(...)'` 纯启动 15/15 段错误（EXIT 139，无任何脚本输出）；`-joff` 启动后运行时 `jit.on()` 正常（ARMv7 VFPv3 全优化开）；同一段会话早期 JIT-on 跑通 30 次循环+全二分。期间确认一个自身泄漏：一次后台 harness 的本地 ssh 被 TaskStop 终止后设备端 luajit 残留（PID 32192，6:40 CPU），已 kill；但清除后 JIT-on 基线仍必崩，且 61MB free 下复现。属 KOReader 补丁版 LuaJIT 在该设备当前状态下的启动期问题，超出 Phase 1 范围；设备侧独立验证一律 -joff，正式 KOReader 应用内行为另行验收。
 - 复现命令已写入 docs/INTEGRATION.md 验收清单（夹具启动、CA 签发约束 keyUsage、设备 harness/二分/浸泡脚本）。
 - 未做：R4 正式业务基准、K4 真机、瘦身影响 manifest 调整、部署/翻默认/发版/commit——均待用户明确授权或设备条件。
+
+## 2026-11-08 20:15 — K5 可控负载基准受阻（设备级 exec 段错误）；主仓 GH 上线
+
+- 基准工具就绪并提交 bb24b19：tools/tls_fixture.py 增 /bench 路由（16KiB/128KiB/512KiB 等长 JSON 负载，修复单元实际 45 字节导致的长度 bug，host 三档 sanity 全过），tools/device_bench_check.lua 双后端交替采样（与已验收的 device_transport_check.lua 同一 dispatch 模式，走 https://localhost:18474 覆盖 DNS worker 路径）。
+- 设备退化证据链：bench 三次未到 VERSION 输出 → -R 隧道对照矩阵（带/无隧道各 6/6 EXIT 139，否定隧道相关性）→ /tmp 副本 luajit（避开 /mnt/us 执行路径，md5 一致）仍 139 → 纯启动 `-e print` 5/5 139 → `/bin/busybox echo` 与 `/bin/cat` 同样 139。结论：K5 当前对新进程 exec 普遍段错误，与 luajit、本组件、二进制位置、文件读取路径均无关；dropbear 既有会话仍正常（md5sum/ls 等在退化初期尚可）。
+- 环境核查排除项：无 core dump（ulimit -c 0）、内存充足（-/+ buffers/cache 约 94MB free）、dmesg 无新错误、/tmp 为 rwfs 32MB 非 tmpfs。dmesg 尾部见一次 TimeSuspended=1112s 的 resume；"好窗口=活跃期、坏窗口=挂起恢复后"为待验证假设（与更早"重写 luajit 后 10/10 过、随后又崩"的分钟级瞬态一致）。
+- 处置：设备侧全部挂起（bench、R4、恢复 printk/core_pattern、清理 luajit.wedged/launch.flag），待设备重启后重跑——重启属用户设备操作，需用户执行或授权。本机夹具（18474）与临时证书保留待复跑，复跑结束后删除私钥。
+- 主仓上线：GH public 仓库 github.com/dororo42/K4WereadRust（gh CLI 创建）。首推失败根因是主仓**未配置任何 remote**（此前误判为凭证问题）；remote add origin + 单次 `-c credential.helper='!/home/doro/.local/bin/gh auth git-credential'`（未改全局 git config）经 LAN 代理推送成功，origin/main=bb24b19 已 ls-remote 核实。
+- 教训：对照矩阵全部失败时，先跑与被测物无关的最小进程（busybox 级）对照，可提前数轮定位到设备级问题，避免在组件侧反复归因。
