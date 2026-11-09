@@ -3,12 +3,12 @@
 #
 # 工具链供应链：
 # - rustc/cargo 固定 1.98.1（与本地验收构建同版本）。
-# - bench（armv7-musleabihf）：musl.cc 官方包直下 + sha256 固化（与 k4tls/build.sh 约定一致）。
-# - libk4tls.so（armel glibc）：koxtoolchain 产物无上游下载源，取本仓 release
-#   `cross-toolchains` 资产 + sha256 固化。armel 必须用老 glibc 工具链（设备 glibc
-#   2.12.1），发行版新 glibc 交叉 gcc 会引入设备缺失的符号版本，不可替代。
-#   配置里 .cargo/config.toml 硬编码的本机 linker 路径用
-#   CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABI_LINKER 环境变量覆盖。
+# - bench（armv7-musleabihf）与 libk4tls.so（armel glibc）工具链均取本仓 release
+#   `cross-toolchains` 资产 + sha256 固化。musl.cc 直连在 2026-11-09 首跑
+#   （run 42627407583）连续连接失败，改为同源资产分发；资产即 musl.cc 官方包原样。
+# - armel 必须用老 glibc 工具链（设备 glibc 2.12.1），发行版新 glibc 交叉 gcc 会
+#   引入设备缺失的符号版本，不可替代。配置里 .cargo/config.toml 硬编码的本机
+#   linker 路径用 CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABI_LINKER 环境变量覆盖。
 name: ci
 
 on:
@@ -57,9 +57,10 @@ jobs:
           rustup toolchain install 1.98.1 --profile minimal
           rustup default 1.98.1
           rustup target add armv7-unknown-linux-musleabihf
-      - name: musl.cc 交叉 gcc（sha256 固化）
+      - name: musl 交叉 gcc（release 资产，sha256 固化）
         run: |
-          curl -fsSL --retry 3 -o /tmp/musl-armhf.tgz https://musl.cc/arm-linux-musleabihf-cross.tgz
+          curl -fsSL --retry 3 -o /tmp/musl-armhf.tgz \
+            https://github.com/dororo42/K4WereadRust/releases/download/cross-toolchains/arm-linux-musleabihf-cross.tgz
           echo '11e155a090789c854afb5d91e57c81f441ccdb92f7f277789c3a6d5884a68e58  /tmp/musl-armhf.tgz' | sha256sum -c -
           mkdir -p "$HOME/x-tools"
           tar xzf /tmp/musl-armhf.tgz -C "$HOME/x-tools"
