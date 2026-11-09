@@ -153,3 +153,12 @@
 - 设备动作（KOReader 未运行，FAT 原子性无运行时风险）：`cp -p` 备份旧版为同目录 `libk4tls.so.pre-ci`（md5 978b5739…，保留作回滚点）→ scp 推送 CI 产物 run 42629289540 artifact → 设备 md5 8b89393a… 与 CI 产物一致（1,186,764 B）。
 - 验证：①本地预检 readelf——CI 产物动态符号版本上限 GLIBC_2.12，与设备 glibc 2.12.1 匹配；②设备 LuaJIT 生产路径探针（require weread.lib.k4tls → is_available → 插件同目录 dlopen）：`available: true`、`version: k4tls 0.1.0 rustls-0.23/ring`、rc=0；探针残留已清理。
 - 边界：新 .so 暂不被使用（设备无 WEREAD_TLS_BACKEND 注入，默认 LuaSec）——替换只是把规范构建就位；真正走 k4tls 链路需翻闸或显式 env。旧 lua 副本（无 -18/-19 文本）与新 .so 向后兼容：-18/-19 文本会显示为 "k4tls unknown error -N"，属可接受降级，双仓 lua 同步后消除。
+
+## 2026-11-09 — 测试方案 A 应用内冒烟 PASS（CI 产物 .so 生产链路实证）+ -2012 会话过期归因
+
+- 为什么：CI 产物 .so（8b89393a…）替换设备旧版后尚未在真实业务链路运行过；测试 A 用与 13:18 验收相同手段（临时 env 注入、用后即撤）验证 CI .so 在生产路径（真实 KOReader + weread_K4 插件 + 正常入口）完整可用。用户确认入口口径：不从 K4weread 独立入口进；注入前预检 launch.flag 已确认 11/08 消费、目录为空。
+- 设备侧动作：~14:52 UTC 注入 `export WEREAD_TLS_BACKEND=k4tls`（LC_ALL 行后，注释注明冒烟用途与撤除承诺）；用户 14:53:35 / 14:57:24 UTC 两次 KUAL 正常入口全新启动（14:51 会话为注入前 LuaSec 残留，开书验证后 14:51:24 关书退出）；14:58:16 UTC 收证据并当场移除注入，koreader.sh md5 恢复 949c2f8b…（与备份逐字节一致）。
+- 传输层证据（crash.log 3483-3484）：`ffi.load: k4tls`（裸名失败）→ `ffi.load: plugins/weread_K4.koplugin/weread/lib/libk4tls.so`（命中）→ 4 次进度上传 POST /web/book/read + 后续每分钟阅读时长 tick 全部完成完整 TLS 往返（HTTP 200 + JSON 解析正常，tick elapsed 135-176ms），零传输层故障。
+- 业务层归因（-2012 登录超时，error_kind=auth）：服务端以 errCode=-2012 拒绝写请求。crash.log 全史 -2012 共 20 行，其中 6 行在 8 月 LuaSec 时代（08/06、08/08、08/09），errMsg 与报文格式逐字一致——weread 会话空闲过期的既有模式，与 k4tls 无关（登录态约 13:1x 建立，14:57 已约 1.5h）。8 月已见「-2012 ERROR 与 verified 相邻出现」同款（833/834、842/843 行），故 verified 行不构成会话有效性强证据。
+- 边界：进度同步 verified（positions_match）按既有语义容忍服务端拒绝；冒烟目标为传输层，业务写入以插件内重新登录为前提（LuaSec 下同样需要）。运行中进程 env 不受文件撤除影响，下次重启自然回到 LuaSec。
+- 结论：**测试 A PASS**——CI 产物 .so 生产链路完整可用；默认 LuaSec 未动，翻闸前置不变（双仓 lua 同步 + 用户决策）。
