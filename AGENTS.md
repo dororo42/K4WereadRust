@@ -30,9 +30,8 @@ K4weread Phase 1 工程仓（评估报告 §七 分期）：**无 fork 的 Rust 
 
 ## Current Handoff
 
-- Latest: `handoffs/2026-11-09-105924-k4wereadrust-review-fix/HANDOFF.md`
-- Remote: https://github.com/dororo42/K4WereadRust.git（public，origin/main）
-- Branch: main @ 27c8af3（指针提交后的最终 HEAD 见套件文末追加节）
-- Status: 审查修复批次已提交；登录态完整同步验收 PASS（2026-11-09 K5 真实业务链路，验收注入已移除恢复默认）；Rust 编译验证与插件仓双副本同步待办，默认后端 LuaSec、不翻闸
+- Latest: `handoffs/2026-11-09-214722-k4wereadrust-ci-gates/HANDOFF.md`
+- Branch: main @ 2d25c33
+- Status: CI 门禁上线全绿（F-09 关闭，run 42629289540 三 job ✓，交叉产物已出）；Phase 1 验收已全部闭环（登录态 PASS，提交 443c7ea）；Rust 编译验证已过、插件仓双副本同步待办；默认后端 LuaSec、不翻闸
 
 任何 agent 开始工作前，先读上面的 HANDOFF.md。这份指针由 orbital_handoff 维护，手工交接时请同步更新。

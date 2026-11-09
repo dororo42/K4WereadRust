@@ -137,3 +137,12 @@
 - 边界：`/proc/<pid>/maps` 驻留快照未及采集（同步后 KOReader 即退出），以 ffi.load 成功 + 成功请求链替代，结论不受影响；验收会话用的仍是修复前 .so 与插件仓旧 lua 副本（设备行为与本批次 Rust 修复无关）。
 - 文档同步：INTEGRATION.md 状态行与结论边界、AGENTS.md 集成纪律与 Current Handoff Status、README.md 状态核对基线时态修正（"未提交"→ 已提交 27c8af3）。
 - 翻闸前置不变：Rust 编译验证（CI/授权环境）+ 双仓 lua 副本同步 + 用户决策；默认后端 LuaSec 未动。
+
+## 2026-11-09 — CI 门禁上线全绿（F-09 关闭）+ 首跑双失败修复链
+
+- 为什么：审查报告 §9.3 剩余阻断之首——Rust 改动未经编译验证；且"构建产物由 CI 产出"的纪律缺承载点。用户授权经 GitHub CI 执行 Rust 编译。
+- 改了什么：`.github/workflows/ci.yml`（26849bb）三并行 job——host-gates（cargo test --locked、clippy -D warnings、luac -p + lua5.1 全量、test_slim.py、sh -n）、bench-musleabihf（静态 k4tls-bench）、so-armel-glibc（armel glibc libk4tls.so）；rustc 固定 1.98.1；交叉工具链以本仓 release `cross-toolchains` 资产分发 + sha256 固化（musl 11e155a0…、armel d433aa16…），armel 工具链即产出设备已验收 .so 的同一构建器，config.toml 本机 linker 路径用 CARGO_TARGET_…_LINKER env 覆盖。
+- 首跑失败与修复（run 42627407583）：host-gates ✗ clippy::manual_pattern_char_comparison（url.rs:18）→ 数组 pattern 等价改写；bench ✗ musl.cc 站点宕机（连接 4 连败）→ musl 官方包原样上传 release 资产、CI 改同源拉取（2d25c33）；二跑 404 → 资产上传时沿用了本地文件名，PATCH 改规范名 arm-linux-musleabihf-cross.tgz 后单 job 重跑。
+- 验证：run 42629289540 **三 job 全绿**（host-gates 44s / so-armel 35s / bench 重跑过）。产物：k4tls-bench（armv7-musleabihf 静态，1,135,568 B，sha256 0e8ac5c5…）、libk4tls.so（armel 动态，1,186,764 B，sha256 edb6dc76…，与设备修复前版尺寸相同内容不同——CI 版含 27c8af3/2d25c33 语义修复）。
+- 边界：CI 产物替换设备 .so 与本机 target/ 退役属用户决策；musl.cc 供应链从"直连上游"改为"上游原样 + sha256 固化的本仓资产"；actions 弃用警告（Node 20→24 强制升级、ubuntu-latest 将迁 Ubuntu 26）非阻断。
+- 翻闸前置更新：Rust 编译验证**已过**；剩插件仓双副本 lua 同步 + 用户决策。

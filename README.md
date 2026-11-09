@@ -15,8 +15,8 @@ K4weread Phase 1 工程仓。上游评估：`~/reports/K4weread激进形态评�
 ## 快速上手
 
 ```sh
-# Rust 测试与交叉产物：仅在 CI / 授权环境执行，本机不手工构建（见下方构建纪律）
-(cd k4tls && cargo test && ./build.sh)        # bench(musl 静态) + .so(armel glibc)
+# Rust 测试与交叉产物：由 GitHub Actions 产出（.github/workflows/ci.yml），本机不手工构建
+gh run list --repo dororo42/K4WereadRust    # CI 运行状态；产物在各 run 的 artifacts
 
 # 本机允许的源码级检查与自测
 lua tools/test_k4tls_lua.lua
@@ -30,7 +30,7 @@ python3 tools/slim_koreader.py <src> <dst>
 python3 tools/check_slim.py <dst>
 ```
 
-**构建纪律**：Rust/APK/EXE 等编译产物不在本机产出；需要验证构建时改 workflow 配置并推送，由 GitHub Actions 产出。本仓当前尚无 CI workflow（见 `~/reports/2026-11-09-K4WereadRust-独立代码审查报告.md` F-09）。
+**构建纪律**：Rust/APK/EXE 等编译产物不在本机产出；需要验证构建时改 workflow 配置并推送，由 GitHub Actions 产出。CI 已上线（F-09 关闭，2026-11-09 首绿 run 42629289540）：`.github/workflows/ci.yml` 三 job——host-gates（cargo test/clippy/Lua/Python/shell 门禁）、bench-musleabihf（musl 静态 k4tls-bench）、so-armel-glibc（armel glibc libk4tls.so）；rustc 固定 1.98.1，交叉工具链取本仓 release `cross-toolchains` 资产并 sha256 固化（musl.cc 直连不可用，2026-11-09 实证宕机；资产为官方包原样）。
 
 ## 文档
 
