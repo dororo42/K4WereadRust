@@ -1,0 +1,110 @@
+# k4tls / Phase 1 门禁与交叉产物构建（F-09）。
+# Rust 编译产物一律由本 workflow 产出，本机只做源码级检查——README「构建纪律」的执行点。
+#
+# 工具链供应链：
+# - rustc/cargo 固定 1.98.1（与本地验收构建同版本）。
+# - bench（armv7-musleabihf）：musl.cc 官方包直下 + sha256 固化（与 k4tls/build.sh 约定一致）。
+# - libk4tls.so（armel glibc）：koxtoolchain 产物无上游下载源，取本仓 release
+#   `cross-toolchains` 资产 + sha256 固化。armel 必须用老 glibc 工具链（设备 glibc
+#   2.12.1），发行版新 glibc 交叉 gcc 会引入设备缺失的符号版本，不可替代。
+#   配置里 .cargo/config.toml 硬编码的本机 linker 路径用
+#   CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABI_LINKER 环境变量覆盖。
+name: ci
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: rust 1.98.1（固定）
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component clippy
+          rustup default 1.98.1
+      - name: cargo test --locked
+        working-directory: k4tls
+        run: cargo test --locked
+      - name: cargo clippy -D warnings
+        working-directory: k4tls
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: lua 门禁（luac -p + 全量 lua 测试）
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lua5.1
+          luac5.1 -p $(git ls-files '*.lua')
+          lua5.1 tools/test_k4tls_lua.lua
+      - name: python 门禁（slim 自测）
+        run: python3 -B tools/test_slim.py
+      - name: shell 语法门禁
+        run: sh -n k4tls/build.sh tools/k5_slim_deploy.sh
+
+  bench-musleabihf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: rust 1.98.1（固定）+ musleabihf target
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+          rustup target add armv7-unknown-linux-musleabihf
+      - name: musl.cc 交叉 gcc（sha256 固化）
+        run: |
+          curl -fsSL --retry 3 -o /tmp/musl-armhf.tgz https://musl.cc/arm-linux-musleabihf-cross.tgz
+          echo '11e155a090789c854afb5d91e57c81f441ccdb92f7f277789c3a6d5884a68e58  /tmp/musl-armhf.tgz' | sha256sum -c -
+          mkdir -p "$HOME/x-tools"
+          tar xzf /tmp/musl-armhf.tgz -C "$HOME/x-tools"
+      - name: 构建 k4tls-bench（armv7-musleabihf 静态）
+        working-directory: k4tls
+        run: |
+          export CC_armv7_unknown_linux_musleabihf="$HOME/x-tools/arm-linux-musleabihf-cross/bin/arm-linux-musleabihf-gcc"
+          export AR_armv7_unknown_linux_musleabihf="${CC_armv7_unknown_linux_musleabihf%-gcc}-ar"
+          cargo build --locked --release --target armv7-unknown-linux-musleabihf
+          file target/armv7-unknown-linux-musleabihf/release/k4tls-bench
+          sha256sum target/armv7-unknown-linux-musleabihf/release/k4tls-bench | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: k4tls-bench-armv7-musleabihf
+          path: k4tls/target/armv7-unknown-linux-musleabihf/release/k4tls-bench
+          if-no-files-found: error
+
+  so-armel-glibc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: rust 1.98.1（固定）+ gnueabi target
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup default 1.98.1
+          rustup target add arm-unknown-linux-gnueabi
+      - name: koxtoolchain armel 交叉 gcc（release 资产，sha256 固化）
+        run: |
+          curl -fsSL --retry 3 -o /tmp/armel.tgz \
+            https://github.com/dororo42/K4WereadRust/releases/download/cross-toolchains/arm-kindle5-linux-gnueabi.tgz
+          echo 'd433aa161b9f831080629774fc4b7b76dfbe361185fb1a3b33be48342de16639  /tmp/armel.tgz' | sha256sum -c -
+          mkdir -p "$HOME/x-tools"
+          tar xzf /tmp/armel.tgz -C "$HOME/x-tools"
+      - name: 构建 libk4tls.so（armel glibc）
+        working-directory: k4tls
+        run: |
+          export CC_arm_unknown_linux_gnueabi="$HOME/x-tools/arm-kindle5-linux-gnueabi/bin/arm-kindle5-linux-gnueabi-gcc"
+          export AR_arm_unknown_linux_gnueabi="${CC_arm_unknown_linux_gnueabi%-gcc}-ar"
+          export CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABI_LINKER="$CC_arm_unknown_linux_gnueabi"
+          cargo build --locked --release --target arm-unknown-linux-gnueabi --lib
+          file target/arm-unknown-linux-gnueabi/release/libk4tls.so
+          sha256sum target/arm-unknown-linux-gnueabi/release/libk4tls.so | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libk4tls-so-armel
+          path: k4tls/target/arm-unknown-linux-gnueabi/release/libk4tls.so
+          if-no-files-found: error
