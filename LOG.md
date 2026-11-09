@@ -146,3 +146,10 @@
 - 验证：run 42629289540 **三 job 全绿**（host-gates 44s / so-armel 35s / bench 重跑过）。产物：k4tls-bench（armv7-musleabihf 静态，1,135,568 B，sha256 0e8ac5c5…）、libk4tls.so（armel 动态，1,186,764 B，sha256 edb6dc76…，与设备修复前版尺寸相同内容不同——CI 版含 27c8af3/2d25c33 语义修复）。
 - 边界：CI 产物替换设备 .so 与本机 target/ 退役属用户决策；musl.cc 供应链从"直连上游"改为"上游原样 + sha256 固化的本仓资产"；actions 弃用警告（Node 20→24 强制升级、ubuntu-latest 将迁 Ubuntu 26）非阻断。
 - 翻闸前置更新：Rust 编译验证**已过**；剩插件仓双副本 lua 同步 + 用户决策。
+
+## 2026-11-09 — CI 产物替换设备 .so（用户授权）
+
+- 为什么：CI 版 .so 含 27c8af3/2d25c33 全部语义修复（-18/-19 确定性错误码、空 POST Content-Length: 0、URL 分离），设备继续跑修复前旧版会让 CI 验证与设备实际脱节；用户明确授权替换。
+- 设备动作（KOReader 未运行，FAT 原子性无运行时风险）：`cp -p` 备份旧版为同目录 `libk4tls.so.pre-ci`（md5 978b5739…，保留作回滚点）→ scp 推送 CI 产物 run 42629289540 artifact → 设备 md5 8b89393a… 与 CI 产物一致（1,186,764 B）。
+- 验证：①本地预检 readelf——CI 产物动态符号版本上限 GLIBC_2.12，与设备 glibc 2.12.1 匹配；②设备 LuaJIT 生产路径探针（require weread.lib.k4tls → is_available → 插件同目录 dlopen）：`available: true`、`version: k4tls 0.1.0 rustls-0.23/ring`、rc=0；探针残留已清理。
+- 边界：新 .so 暂不被使用（设备无 WEREAD_TLS_BACKEND 注入，默认 LuaSec）——替换只是把规范构建就位；真正走 k4tls 链路需翻闸或显式 env。旧 lua 副本（无 -18/-19 文本）与新 .so 向后兼容：-18/-19 文本会显示为 "k4tls unknown error -N"，属可接受降级，双仓 lua 同步后消除。
