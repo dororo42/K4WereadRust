@@ -162,3 +162,18 @@
 - 业务层归因（-2012 登录超时，error_kind=auth）：服务端以 errCode=-2012 拒绝写请求。crash.log 全史 -2012 共 20 行，其中 6 行在 8 月 LuaSec 时代（08/06、08/08、08/09），errMsg 与报文格式逐字一致——weread 会话空闲过期的既有模式，与 k4tls 无关（登录态约 13:1x 建立，14:57 已约 1.5h）。8 月已见「-2012 ERROR 与 verified 相邻出现」同款（833/834、842/843 行），故 verified 行不构成会话有效性强证据。
 - 边界：进度同步 verified（positions_match）按既有语义容忍服务端拒绝；冒烟目标为传输层，业务写入以插件内重新登录为前提（LuaSec 下同样需要）。运行中进程 env 不受文件撤除影响，下次重启自然回到 LuaSec。
 - 结论：**测试 A PASS**——CI 产物 .so 生产链路完整可用；默认 LuaSec 未动，翻闸前置不变（双仓 lua 同步 + 用户决策）。
+
+## 2026-11-09 — 三副本 lua 同步完成（仓内 → 插件仓 → 设备，翻闸前置收口）
+
+- 为什么：翻闸前置之一——设备 lua 副本仍是 11/08 旧版（缺 -18/-19 文本、词表豁免、last_reason），与 CI .so 的语义修复不配套；三副本对齐后 k4tls 语义层在设备完整生效。
+- 同步内容：仅 `k4tls.lua`（30a9db1a）+ `transport.lua`（6346dd22）两个文件；diff 预检确认插件仓为纯旧版（无插件仓侧独立改动），插件仓工作区干净（HEAD 366b1f9，v9.8 出包收尾）后执行。
+- 各步验证：①插件仓 cp 后 md5 双侧一致 + luac -p 通过，插件仓 git 恰好 M 这两个文件；②设备 scp 前 cp -p 备份（`k4tls.lua.pre-sync` / `transport.lua.pre-sync`，即旧版 3d17fd95/1ec9d2c7）；③推送后设备 md5 与仓内一致，-18/-19 与 last_reason 内容标记在位；④设备 LuaJIT 生产路径探针 rc=0——`is_available: true`、`error_text(-18)= "k4tls invalid or unsupported url"`（旧版此处为 "k4tls unknown error -18"，探针即新旧判别器）、-18 不拼 detail（词表豁免生效）、env=k4tls 时 `transport.resolve` 返回 reason=k4tls。
+- 边界：插件仓这两个文件为未提交修改——是否提交由用户/并行会话决定（未代提交）；运行中 KOReader 不可见新 lua（require 缓存），下次启动生效；探针脚本留存设备 /tmp/k5inspect/（临时测试物）。
+- 结论：翻闸前置「双仓 lua 同步」**完成**；剩用户翻闸决策。方案 B（注入浸泡）随时可开始。
+
+## 2026-11-09 — 方案 B 浸泡开始（env 注入态，多日）
+
+- 设备 `/mnt/us/koreader/koreader.sh` 已注入 `export WEREAD_TLS_BACKEND=k4tls`（LC_ALL 行后，注释注明"浸泡测试，翻闸决策后处置"），md5 `9ffc2f33…`（对照基线 949c2f8b… = 无注入恢复态）。
+- 本轮浸泡栈位：CI 产物 .so（8b89393a…）+ 新版 lua（30a9db1a/6346dd22）——设备首次以完整语义栈跑 k4tls。
+- 浸泡期证据口径：crash.log 每会话 `ffi.load` 两行 + ProgressSync/ReadReport 活动与错误、`last_reason` 诊断；已知前置：weread 会话已于 14:57 起过期（-2012），用户需在插件内重新登录，写请求才恢复。
+- 回滚：删除注入两行即恢复 949c2f8b 基线（默认 LuaSec）。
