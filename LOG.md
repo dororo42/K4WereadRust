@@ -128,3 +128,12 @@
 - 验证：`python3 -B tools/test_slim.py` 13/13（新增部署 verify 合成树、清单一致性 2 项）；`lua5.1 tools/test_k4tls_lua.lua` 67/67（新增词表不命中、强制后端诊断 2 项）；`luac -p` 全部 Lua 通过；`sh -n` 两个 shell 脚本通过；Python AST 4 文件通过；`rustfmt --emit stdout` 仅语法解析全部通过；IDE 诊断 0 条。20 个文件 +351/-48。
 - 边界：**Rust 改动未经编译验证**——遵守"Rust 编译产物一律由 GitHub workflow 产出、本机不手工构建"的纪律，rustfmt 只做语法解析不替代类型/链接检查；需 CI 或授权环境跑 `cargo test --locked` / clippy / 交叉构建。`lua/` 与插件仓 `weread/lib/` 双副本尚未同步（插件仓只读、有并行在制品），故当前不翻默认后端。未改 `handoffs/`，交接文档未上传。
 - 报告已追加 §9「修复与复核」，第 0–8 节原始审查结论保留为审计轨迹。
+
+## 2026-11-09 — 登录态完整同步验收 PASS + 验收注入回退（Phase 1 集成阶段收尾）
+
+- 为什么：k4tls 组件的最后一项验收——真实 KOReader 应用内、登录态业务链路（进度同步 + 阅读时长上报）走 k4tls 全程成功，才算 P1-A 集成验收闭环；验收手段是显式 env 注入（不翻默认值），完成后必须回退。
+- 设备侧动作（K5，用户操作 + 本机核证）：11/08 22:29 注入 `export WEREAD_TLS_BACKEND=k4tls`（备份 `koreader.sh.pre-k4tls-accept`）；13:18 用户 KUAL 全新启动 KOReader（插件 v9.8）并触发同步；13:40 本机恢复 `cp -p` 备份，md5 一致（949c2f8b…），注入 GONE，默认 LuaSec 恢复，备份留设备作审计。
+- 验收证据（crash.log 实录，/tmp/k5inspect/k5_accept_evidence.sh 采集）：`11/09 13:18:15 [WeRead] initialized`（注入后全新启动）→ `ffi.load: k4tls`（裸名失败）→ `ffi.load: plugins/weread_K4.koplugin/weread/lib/libk4tls.so`（插件同目录命中 = 生产形态位置；此两行仅在 env=k4tls 且 `is_available()` 被调用时出现，同时反证 env 传播）→ 1 秒内 `ProgressSync verified: positions_match` + `read report success: has_synckey=true`，零传输错误、无回退；设备 .so md5 `978b5739…` 与 R4 基准同一构建。
+- 边界：`/proc/<pid>/maps` 驻留快照未及采集（同步后 KOReader 即退出），以 ffi.load 成功 + 成功请求链替代，结论不受影响；验收会话用的仍是修复前 .so 与插件仓旧 lua 副本（设备行为与本批次 Rust 修复无关）。
+- 文档同步：INTEGRATION.md 状态行与结论边界、AGENTS.md 集成纪律与 Current Handoff Status、README.md 状态核对基线时态修正（"未提交"→ 已提交 27c8af3）。
+- 翻闸前置不变：Rust 编译验证（CI/授权环境）+ 双仓 lua 副本同步 + 用户决策；默认后端 LuaSec 未动。

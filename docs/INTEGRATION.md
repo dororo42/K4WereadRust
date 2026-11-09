@@ -1,8 +1,9 @@
 # P1-A 集成指南：k4tls 接入 weread_K4.koplugin
 
 状态：**插件仓已接线；R4 传输基准已完成（2026-11-08 K5 真实端点 weread.qq.com
-30/30，中位 k4tls 546.6 vs LuaSec 643.1 ms），登录态完整业务验收待集成阶段**。
-默认后端保持 LuaSec；仅在独立测试进程显式选择 k4tls，不因部署库文件自动启用。
+30/30，中位 k4tls 546.6 vs LuaSec 643.1 ms）；登录态完整业务验收已通过（2026-11-09
+K5 真实 KOReader 内 k4tls 全程驱动 ProgressSync/ReadReport，实录见「结论边界」）**。
+默认后端保持 LuaSec；验收经由显式 `WEREAD_TLS_BACKEND=k4tls` 注入完成，验收后已移除恢复默认。
 K5 的测试结果不替代 K4 验收。
 
 ## 架构
@@ -133,4 +134,5 @@ timeout 300 sshpass -p '' ssh -p 2222 -o ExitOnForwardFailure=yes -R 127.0.0.1:1
 
 - 已验证：armel .so 在 glibc 2.12.1 LuaJIT 的 dlopen、FFI 往返、全部传输失败路径语义、限额/超时/证书校验、持久 DNS worker 生命周期（nodelete）、约 560 请求零失败（传输链 + 浸泡 + 基准）；受控负载基准（16K/128K/512K × 15 × 双后端交替，回环 TLS1.2）：k4tls 中位 43.1/118.9/367.6 ms vs LuaSec 106.0/188.4/434.8 ms。
 - 后续批次补记（2026-11-08 深夜～2026-11-09，详见 `docs/SLIMMING.md` 与 `AGENTS.md`）：**R4 正式业务基准已完成**（真实 weread.qq.com，双后端交替 30/30、正文等长 525,412 B，中位 k4tls 546.6 vs LuaSec 643.1 ms）；**P1-B 瘦身已在 K5 部署上线且可回滚**（`sh tools/k5_slim_deploy.sh rollback`，备份树 `koreader.pre-slim-20261108`）。
-- 未验证：K4 真机（用户决策延后）、登录态完整同步流程、KOReader 应用内（JIT 与 UI）行为、正式插件内翻默认后端。
+- 验收补记（2026-11-09 13:18）：**登录态完整同步验收 PASS**——注入 `WEREAD_TLS_BACKEND=k4tls` 后全新启动 KOReader（插件 v9.8），crash.log 实录 `ffi.load: k4tls`（裸名失败）→ `ffi.load: plugins/weread_K4.koplugin/weread/lib/libk4tls.so`（插件同目录命中，生产形态位置；这两行本身即 env 传播与 `is_available()` 被调用的反证），加载 1 秒内 `ProgressSync verified: positions_match` + `read report success: has_synckey=true`，零传输错误、无回退；.so md5 `978b5739…` 与 R4 基准同一构建。边界：`/proc/<pid>/maps` 驻留快照未及采集（同步后 KOReader 即退出），以加载成功 + 成功请求链替代。验收后注入已移除，设备恢复默认 LuaSec（koreader.sh 与备份 `koreader.sh.pre-k4tls-accept` md5 一致，备份留设备作审计）。
+- 未验证：K4 真机（用户决策延后）、正式插件内翻默认后端（前置：Rust 编译验证 + 双仓 lua 副本同步，见审查报告 §9.3）、KOReader 应用内非传输层的其余行为。

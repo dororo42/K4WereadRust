@@ -2,7 +2,7 @@
 
 K4weread Phase 1 工程仓。上游评估：`~/reports/K4weread激进形态评估_KOReader裁剪+weread主程序化+Rust加持-2026-11-08.md`（结论：分期采纳，本仓 = Phase 1 的 S1+S3 解耦部分）。
 
-> 状态核对基线：`main @ 3b31055` + 2026-11-09 独立审查修复批次（工作区，未提交）。
+> 状态核对基线：`main @ c5462e4`（含 2026-11-09 独立审查修复批次 `27c8af3`）。
 > 权威状态以 `AGENTS.md` 的 Current Handoff 为准；下表只作速览。
 
 ## 交付物
