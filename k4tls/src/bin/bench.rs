@@ -107,7 +107,10 @@ fn main() {
             .to_string_lossy()
             .to_string();
         let status = resp.status;
-        unsafe { k4tls::k4tls_free_response(&mut resp) };
+        // 契约：仅 rc==0 的响应持有可释放指针；-1/-99 分支不调用 free。
+        if rc == 0 {
+            unsafe { k4tls::k4tls_free_response(&mut resp) };
+        }
         println!(
             "#{} rc={} status={} {} {:.1}ms",
             i,

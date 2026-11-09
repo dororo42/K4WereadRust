@@ -11,6 +11,7 @@
 #   - musl 交叉 gcc: ~/x-tools/arm-linux-musleabihf-cross/（musl.cc 包，
 #     GitHub TLS 失败走 LAN 代理 http://192.168.2.153:16492）
 #   - armel 交叉 gcc: ~/x-tools/arm-kindle5-linux-gnueabi/（koxtoolchain 产物）
+# 注：Rust 编译产物统一由 CI/授权环境执行，本机只做源码级检查。
 set -e
 
 # 非交互/后台 shell 的 PATH 可能缺 ~/.cargo/bin（rustup/cargo 所在）。
@@ -31,14 +32,15 @@ build_bench() {
     rustup target add "$TARGET_MUSL"
     if [ ! -x "$CC_MUSL" ]; then
         echo "[build.sh] 缺 musl 交叉 gcc（ring C 部分需要）:" >&2
-        echo "  mkdir -p ~/x-tools && cd ~/x-tools && curl -x http://192.168.2.153:16492 -LO https://musl.cc/arm-linux-musleabihf-cross.tgz && tar xzf arm-linux-musleabihf-cross.tgz" >&2
+        echo "  musl.cc/arm-linux-musleabihf-cross.tgz（GitHub TLS 失败走 LAN 代理 http://192.168.2.153:16492）" >&2
+        echo "  下载后必须核对 musl.cc 官方 sha256 再解压：供应链校验不可省略。" >&2
         exit 3
     fi
     # cc-rs 1.11+ 只读小写形式：CC_<target_with_underscores>（大写形式不被识别，
     # 早期 build.sh 用 tr 转大写导致 cc-rs 静默回落默认交叉前缀搜索）。
     export CC_armv7_unknown_linux_musleabihf="$CC_MUSL"
     export AR_armv7_unknown_linux_musleabihf="${CC_MUSL%-gcc}-ar"
-    cargo build --release --target "$TARGET_MUSL"
+    cargo build --locked --release --target "$TARGET_MUSL"
     echo "bench 产物:"
     file "target/$TARGET_MUSL/release/k4tls-bench" | sed 's/^/  /'
     ls -lh "target/$TARGET_MUSL/release/k4tls-bench" | awk '{print "  " $5, $9}'
@@ -52,7 +54,7 @@ build_so() {
     fi
     export CC_arm_unknown_linux_gnueabi="$CC_ARMEL"
     export AR_arm_unknown_linux_gnueabi="${CC_ARMEL%-gcc}-ar"
-    cargo build --release --target "$TARGET_ARMEL" --lib
+    cargo build --locked --release --target "$TARGET_ARMEL" --lib
     echo "so 产物:"
     file "target/$TARGET_ARMEL/release/libk4tls.so" | sed 's/^/  /'
     ls -lh "target/$TARGET_ARMEL/release/libk4tls.so" | awk '{print "  " $5, $9}'
@@ -62,8 +64,8 @@ case "${1:-all}" in
   bench) build_bench ;;
   so)    build_so ;;
   host)
-    cargo test
-    cargo build --release
+    cargo test --locked
+    cargo build --locked --release
     echo "host 产物: target/release/{k4tls-bench,libk4tls.so}"
     ;;
   all)   build_bench; build_so ;;

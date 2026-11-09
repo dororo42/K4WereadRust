@@ -178,11 +178,17 @@ def main(argv=None):
     skip_files = {f"{FONTS_SUBDIR}/{name}" for name in excluded_fonts}
 
     src_size = dir_size(src)
-    # 所有只读预检通过后，才允许替换现存目标。
+    # 所有只读预检通过后，才允许替换现存目标；且只删本工具自己的产物，
+    # 避免误传路径时把任意目录 rmtree 掉。
     if args.force and os.path.exists(dst):
+        if not os.path.isfile(os.path.join(dst, "SLIM_REPORT.json")):
+            raise SystemExit(
+                f"--force refuses to remove a directory that is not a slim product: {dst}"
+            )
         print(f"[warn] removing existing dst: {dst}")
         shutil.rmtree(dst)
     skipped_dirs, skipped_files = copy_tree(src, dst, skip_dirs, skip_files)
+    # 报告文件在下面才写入，dst_size 不含它；check_slim 只用它判「非空」。
     dst_size = dir_size(dst)
 
     print(f"src: {src} ({human(src_size)})")
@@ -190,13 +196,16 @@ def main(argv=None):
     print(f"plugins: kept {len(keep_plugins & present_plugins)}, excluded {skipped_dirs} (expected {len(excluded_plugins)})")
     print(f"fonts:   kept {len(present_fonts & keep_fonts)}, excluded {skipped_files} (expected {len(excluded_fonts)})")
 
+    with open(args.manifest, "rb") as fh:
+        manifest_sha256 = hashlib.sha256(fh.read()).hexdigest()
     report = {
         "src": src, "dst": dst, "src_bytes": src_size, "dst_bytes": dst_size,
         "kept_plugins": sorted(keep_plugins & present_plugins),
         "excluded_plugins": excluded_plugins,
         "kept_fonts": sorted(present_fonts & keep_fonts),
         "excluded_fonts_count": len(excluded_fonts),
-        "manifest_sha256": hashlib.sha256(open(args.manifest, "rb").read()).hexdigest(),
+        "manifest_sha256": manifest_sha256,
+        "dst_bytes_note": "excludes SLIM_REPORT.json itself",
     }
     with open(os.path.join(dst, "SLIM_REPORT.json"), "w", encoding="utf-8") as fh:
         json.dump(report, fh, ensure_ascii=False, indent=2)

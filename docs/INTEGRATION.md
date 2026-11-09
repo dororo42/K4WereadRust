@@ -20,6 +20,8 @@ client.lua (weread_K4.koplugin)
   `-13`→timeout（F-21 语义：不重试）、`-11`→connection refused、`-10`→host or
   service not provided（ipv4_dns 解析类单次重试）、`-15/-14`→closed（F-23 瞬态
   单次重试）、`-16`→`(nil, "binary response exceeds the N-byte limit")`（由 client 统一抛错）。
+  `-18`（非法 URL）/`-19`（请求构造错误）是确定性参数失败：文本不含上述词表关键词，
+  也不拼接 Rust 侧 detail，避免确定性错误被 client 当成可重试故障反复消耗预算。
 - 超时注入：client.lua 现有 block/total 秒值 ×1000 传入 C ABI；luasocket 路径忽略新字段。
 
 ## client.lua 补丁（唯一 diff）
@@ -127,7 +129,8 @@ timeout 300 sshpass -p '' ssh -p 2222 -o ExitOnForwardFailure=yes -R 127.0.0.1:1
 - 独立进程 JIT-on 与 `-joff` 均实测正常（2026-11-08 晚各 5/5 rc=0）；早前"JIT-on 纯启动必崩"结论系设备端 `timeout` 段错误假象。正式 KOReader 应用内行为仍需单独验收。
 - **设备端不要用 `timeout` 包裹命令**：该机 busybox 的 `timeout` applet 稳定段错误（EXIT 139，2026-11-08 实录 `timeout 5 /bin/true` 复现，曾致一连串"exec 普遍段错误/JIT-on 必崩"的误诊）。需要限时就在本机 `timeout N ssh …` 包整条会话。终止本地 ssh 前仍要确认远端进程退出（末尾 `pgrep` 检查），避免残留进程占满单核设备。
 
-## 结论边界（2026-11-08 K5）
+## 结论边界（2026-11-08 K5，2026-11-09 复核）
 
 - 已验证：armel .so 在 glibc 2.12.1 LuaJIT 的 dlopen、FFI 往返、全部传输失败路径语义、限额/超时/证书校验、持久 DNS worker 生命周期（nodelete）、约 560 请求零失败（传输链 + 浸泡 + 基准）；受控负载基准（16K/128K/512K × 15 × 双后端交替，回环 TLS1.2）：k4tls 中位 43.1/118.9/367.6 ms vs LuaSec 106.0/188.4/434.8 ms。
-- 未验证：R4 正式业务基准（weread 真实负载双后端对比）、K4 真机、KOReader 应用内（JIT 与 UI）行为、瘦身部署。
+- 后续批次补记（2026-11-08 深夜～2026-11-09，详见 `docs/SLIMMING.md` 与 `AGENTS.md`）：**R4 正式业务基准已完成**（真实 weread.qq.com，双后端交替 30/30、正文等长 525,412 B，中位 k4tls 546.6 vs LuaSec 643.1 ms）；**P1-B 瘦身已在 K5 部署上线且可回滚**（`sh tools/k5_slim_deploy.sh rollback`，备份树 `koreader.pre-slim-20261108`）。
+- 未验证：K4 真机（用户决策延后）、登录态完整同步流程、KOReader 应用内（JIT 与 UI）行为、正式插件内翻默认后端。

@@ -198,7 +198,27 @@ fn non_https_url_rejected() {
         trust_pem: None,
     })
     .expect_err("must reject");
-    assert_eq!(err.code(), k4tls::codes::DNS_FAIL);
+    // 确定性参数错误不得走 DNS 码，否则会被 client 误判为可重试的解析故障。
+    assert_eq!(err.code(), k4tls::codes::INVALID_URL);
+}
+
+#[test]
+fn invalid_request_header_maps_invalid_request() {
+    let server = TestServer::spawn(
+        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_string(),
+        false,
+    );
+    let err = perform(Request {
+        url: &format!("https://127.0.0.1:{}/", server.addr.port()),
+        method: "GET",
+        headers: vec!["X-Bad: a\r\nX-Injected: b"],
+        body: None,
+        budgets: budgets(),
+        max_response_bytes: 1024,
+        trust_pem: Some(server.root_pem.as_bytes()),
+    })
+    .expect_err("must reject");
+    assert_eq!(err.code(), k4tls::codes::INVALID_REQUEST);
 }
 
 fn limited_request(

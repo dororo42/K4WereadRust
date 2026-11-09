@@ -242,7 +242,7 @@ fn io_error(e: io::Error, fallback: i32, phase: &str) -> TransportError {
 pub fn perform(req: Request) -> Result<Response, TransportError> {
     let started = Instant::now();
     let target = parse_https_url(req.url)
-        .ok_or_else(|| code(codes::DNS_FAIL, format!("not an https url: {:?}", req.url)))?;
+        .ok_or_else(|| code(codes::INVALID_URL, format!("not an https url: {:?}", req.url)))?;
     let deadline = started
         .checked_add(req.budgets.total_deadline)
         .ok_or_else(|| code(codes::TIMEOUT, "invalid total deadline"))?;
@@ -315,7 +315,7 @@ pub fn perform(req: Request) -> Result<Response, TransportError> {
         &req.headers,
         req.body,
     )
-    .map_err(|m| code(codes::WRITE_FAIL, m))?;
+    .map_err(|m| code(codes::INVALID_REQUEST, m))?;
     write_all_tls(&mut stream, &wire)?;
     let result = http::read_response(&mut stream, req.method, req.max_response_bytes);
     remaining(deadline)?;

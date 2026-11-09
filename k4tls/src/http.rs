@@ -101,8 +101,14 @@ pub fn serialize_request(
         buf.extend_from_slice(h.as_bytes());
         buf.extend_from_slice(b"\r\n");
     }
-    if let Some(b) = body {
-        buf.extend_from_slice(format!("Content-Length: {}\r\n", b.len()).as_bytes());
+    match body {
+        Some(b) => buf.extend_from_slice(format!("Content-Length: {}\r\n", b.len()).as_bytes()),
+        // 无 body 的 POST/PUT/PATCH 也必须声明零长度：Lua 绑定把空的 ltn12 source
+        // 折叠成 None，若不声明则服务端可能返回 411 或继续等待请求体。
+        None if matches!(method, "POST" | "PUT" | "PATCH") => {
+            buf.extend_from_slice(b"Content-Length: 0\r\n")
+        }
+        None => {}
     }
     buf.extend_from_slice(b"Connection: close\r\n\r\n");
     if let Some(b) = body {
@@ -248,7 +254,9 @@ fn header_parts(line: &str) -> Result<(&str, &str), ReadError> {
 }
 
 fn parse_head(head: &[u8]) -> Result<(u16, Vec<String>), ReadError> {
-    let text = std::str::from_utf8(head).map_err(|_| "head not utf-8")?;
+    // HTTP 头是字节流：非 UTF-8 值（如 GBK 文件名）只做 lossy 替换，不让整包
+    // 响应失败；控制字符是合法 UTF-8，仍由 valid_text / header_parts 逐行拒绝。
+    let text = String::from_utf8_lossy(head);
     let mut lines = text.split("\r\n");
     let status_line = lines.next().ok_or("empty head")?;
     if !valid_text(status_line) {
@@ -422,6 +430,32 @@ mod tests {
         let s = String::from_utf8(b).unwrap();
         assert!(s.contains("Content-Length: 7\r\n"));
         assert!(s.ends_with("\r\n\r\npayload"));
+    }
+
+    #[test]
+    fn serializes_empty_post_with_zero_length() {
+        let s = String::from_utf8(serialize_request("POST", "/x", "h", &[], None).unwrap()).unwrap();
+        assert!(s.contains("Content-Length: 0\r\n"));
+        assert!(s.ends_with("Connection: close\r\n\r\n"));
+        for method in ["PUT", "PATCH"] {
+            let s =
+                String::from_utf8(serialize_request(method, "/x", "h", &[], None).unwrap()).unwrap();
+            assert!(s.contains("Content-Length: 0\r\n"), "{method}");
+        }
+        let s = String::from_utf8(serialize_request("GET", "/x", "h", &[], None).unwrap()).unwrap();
+        assert!(!s.contains("Content-Length"));
+    }
+
+    #[test]
+    fn accepts_non_utf8_header_bytes() {
+        let mut raw = b"HTTP/1.1 200 OK\r\nX-Name: ".to_vec();
+        raw.extend_from_slice(&[0xD6, 0xD0, 0xCE, 0xC4]); // GBK "中文"，非合法 UTF-8
+        raw.extend_from_slice(b"\r\nContent-Length: 2\r\n\r\nok");
+        let r = resp(&raw).unwrap();
+        assert_eq!(r.status, 200);
+        assert_eq!(r.body, b"ok");
+        assert_eq!(r.header_lines.len(), 2);
+        assert!(r.header_lines[0].contains('\u{fffd}'));
     }
 
     #[test]

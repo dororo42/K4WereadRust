@@ -1,5 +1,8 @@
 //! TLS 连接器：webpki-roots 基础信任库（进程内缓存）+ 可选 per-request PEM 追加根
-//! （供 B-3 mock 网关集成测试/后续 pinning 用；生产 Lua 路径不传）。
+//! （供 B-3 mock 网关/受控 TLS 夹具用；生产 Lua 路径不传）。
+//!
+//! 注意：`extra_pem` 是「在公共根库之上**追加**自定义根」，不是证书 pinning——
+//! 基础信任库始终生效。若将来需要真正的 pinning，应提供独立的替换模式开关。
 
 use std::sync::OnceLock;
 

@@ -2,11 +2,13 @@
 """K4weread 瘦身产物校验门禁。
 
 对 slim_koreader.py 产物做结构校验：必需入口在位、保留插件齐全、
-排除面确实干净、CJK 回退字体在保留集内。退出码 0 = 通过。
+排除面确实干净、CJK 回退字体在保留集内、产物与 manifest 版本一致。
+退出码 0 = 通过。
 
 用法: check_slim.py <slim_tree_dir> [--manifest tools/slim_manifest.json]
 """
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -29,6 +31,8 @@ def main(argv=None):
         print(f"[FAIL] tree not found: {tree}")
         return 1
 
+    with open(args.manifest, "rb") as fh:
+        manifest_sha256 = hashlib.sha256(fh.read()).hexdigest()
     with open(args.manifest, "r", encoding="utf-8") as fh:
         manifest = json.load(fh)
 
@@ -52,6 +56,9 @@ def main(argv=None):
             report = json.load(fh)
         if report.get("dst_bytes", 0) == 0:
             ok = fail("report says dst is empty")
+        # 产物必须由本次 --manifest 生成，否则「门禁通过」不能证明清单版本一致。
+        if report.get("manifest_sha256") != manifest_sha256:
+            ok = fail("SLIM_REPORT.json was produced from a different manifest")
 
     fdir = os.path.join(tree, "fonts")
     kept_font_files = set()
@@ -65,7 +72,13 @@ def main(argv=None):
         ok = fail(f"keep font missing: {missing}")
     for extra in sorted(kept_font_files - keep_fonts):
         ok = fail(f"unexpected font: {extra}")
-    if not any("DroidSansFallback" in f or "NotoSansCJK" in f for f in kept_font_files):
+    # 必须是真正的字体文件；许可证/说明文件即使含 CJK 字样也不算回退载体。
+    cjk_fonts = [
+        f for f in kept_font_files
+        if ("DroidSansFallback" in f or "NotoSansCJK" in f)
+        and f.lower().endswith((".ttf", ".otf", ".ttc"))
+    ]
+    if not cjk_fonts:
         ok = fail("CJK fallback font (DroidSansFallback*/NotoSansCJK*) not in kept set — weread 正文/回退渲染会退化")
 
     print(f"[{'PASS' if ok else 'FAIL'}] {tree}")

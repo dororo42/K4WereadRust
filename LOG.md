@@ -118,3 +118,13 @@
 - 修复（与 FreeSans 同法，纯增量可逆）：从备份树 cp FreeSerif.ttf（1862212B，md5 ddf0ad73fbf815212c8c9268dadbcaa2 对账一致）→ 清 cache/fontlist/fontinfo.dat。待用户重启 KOReader 冒烟。
 - 工具同步：slim_manifest.json keep_fonts+FreeSerif（comment 记两轮字形教训）、k5_slim_deploy.sh KEEP_FONTS 同步、test_slim.py keep/gone 断言翻转（FreeSansBold 仍排除），11/11 全绿。
 - 体积口径闭合：fonts 25168→21192 KiB（省 ~4.0M，含两轮回补 2.7M）、plugins 4104→1376 KiB（省 ~2.7M）→ 瘦身面净省 ≈6.7M；整树 du 96112 vs 备份 95016 反升 1.1M = weread 数据目录 8.4M（10157 本书架缓存，用户数据不属瘦身面）持续增长 + FAT du 噪声。**新发现（记录不动）：l10n 目录 18.9M 全语言翻译文件是未来瘦身候选**，不在已批准 manifest 范围，未经用户确认不裁。
+
+## 2026-11-09 — 独立代码审查修复批次（P0/P1 + 可选 P2，仅工作区，未提交）
+
+- 背景：`~/reports/2026-11-09-K4WereadRust-独立代码审查报告.md` 的 1 项阻断 + 8 项重要发现；用户要求"进行修复，并更新报告"。本批次只改工作区，未 commit/push/发版，未动设备、插件仓与 K4weread 仓。
+- P0：F-01 `tools/k5_slim_deploy.sh` 的 `verify()` 删掉与 `KEEP_FONTS` 自相矛盾的目录级泄漏断言（保留 `$LIST` 逐项判定），并加 `test_slim.py` 合成树回归；F-06 `README.md`/`docs/INTEGRATION.md`/`docs/SLIMMING.md` 状态对齐（R4 完成、K5 slim 已上线、v9.8、构建纪律、rsync 与脚本方案标注）。
+- P1：F-02 空 POST/PUT/PATCH 补 `Content-Length: 0`；F-03 `url.rs` 按 `/?#` 分离 authority、剥离 fragment、入口收紧 host/path 校验；F-04 新增 `-18/-19` 确定性错误码族（Lua 文本不拼 detail、不命中重试词表）、改 `transport.rs` 两处映射；F-05 设备清单与 manifest 的生成期一致性门禁；F-07 `transport.last_reason` + 强制 k4tls 失败时的可检索 reason（不改 `request` 契约）；F-08 响应头改 lossy 解码，非 UTF-8 头不再整包失败。
+- P2 取舍：F-13/15/16/20 已修；F-11/12/14/17/18 部分修（ABI 保留字段注释、pinning 措辞、UTF-8 字符边界截断、rollback 原子改名、`--locked`）；F-09（CI workflow 需交叉工具链托管方案与推送授权）、F-10（选择器单点化属接口变更）、F-19（TLS1.2 夹具是有意设计）暂缓；F-21 不改。逐条理由见报告 §9.1。
+- 验证：`python3 -B tools/test_slim.py` 13/13（新增部署 verify 合成树、清单一致性 2 项）；`lua5.1 tools/test_k4tls_lua.lua` 67/67（新增词表不命中、强制后端诊断 2 项）；`luac -p` 全部 Lua 通过；`sh -n` 两个 shell 脚本通过；Python AST 4 文件通过；`rustfmt --emit stdout` 仅语法解析全部通过；IDE 诊断 0 条。20 个文件 +351/-48。
+- 边界：**Rust 改动未经编译验证**——遵守"Rust 编译产物一律由 GitHub workflow 产出、本机不手工构建"的纪律，rustfmt 只做语法解析不替代类型/链接检查；需 CI 或授权环境跑 `cargo test --locked` / clippy / 交叉构建。`lua/` 与插件仓 `weread/lib/` 双副本尚未同步（插件仓只读、有并行在制品），故当前不翻默认后端。未改 `handoffs/`，交接文档未上传。
+- 报告已追加 §9「修复与复核」，第 0–8 节原始审查结论保留为审计轨迹。

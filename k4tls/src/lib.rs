@@ -39,6 +39,7 @@ pub struct K4TlsResponse {
     pub status: libc::c_int,
     /// "Name: value\r\n..." NUL 结尾，保留大小写；k4tls_free_response 归还
     pub headers_blob: *mut libc::c_char,
+    /// 头行数；Lua 绑定目前按 blob 解析，此字段为 C ABI 对齐保留，勿单独删除。
     pub header_count: libc::size_t,
     pub body: *mut libc::c_uchar,
     pub body_len: libc::size_t,
@@ -61,7 +62,11 @@ impl K4TlsResponse {
 
 fn set_err(out: &mut K4TlsResponse, msg: &str) {
     let bytes = msg.as_bytes();
-    let n = bytes.len().min(out.err.len() - 1);
+    let mut n = bytes.len().min(out.err.len() - 1);
+    // 按字符边界回退，避免把 UTF-8 详细说明切成半个字符。
+    while n > 0 && !msg.is_char_boundary(n) {
+        n -= 1;
+    }
     let dst = &mut out.err[..n];
     for (i, b) in bytes[..n].iter().enumerate() {
         dst[i] = *b as libc::c_char;
@@ -87,7 +92,10 @@ enum Failure {
     Transport(transport::TransportError),
 }
 
-unsafe fn cstr_arg(p: *const libc::c_char) -> Option<&'static str> {
+/// # Safety
+/// `p` 必须在本次同步调用期间保持有效；返回值不得逃逸出 `perform_inner`。
+/// 生命周期由调用方约束，不谎报 `'static`。
+unsafe fn cstr_arg<'a>(p: *const libc::c_char) -> Option<&'a str> {
     if p.is_null() {
         return None;
     }

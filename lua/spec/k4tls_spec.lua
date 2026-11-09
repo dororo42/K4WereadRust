@@ -387,6 +387,23 @@ describe("weread.lib.k4tls deterministic adapter", function()
             assert.truthy(k4tls.error_text(case[1]):find(case[2], 1, true))
         end
     end)
+    it("keeps deterministic errors out of every retry wordlist", function()
+        local transient = { "timeout", "wantread", "closed", "connection refused",
+            "connection reset", "broken pipe" }
+        local resolution = { "address family not supported", "eafnosupport",
+            "host or service not provided", "no address associated with name",
+            "name or service not known" }
+        for _, status in ipairs({ -18, -19 }) do
+            -- detail 含诱饵关键词，确定性错误仍不得拼接它。
+            local text = k4tls.error_text(status, "closed timeout connection refused"):lower()
+            for _, needle in ipairs(transient) do
+                assert.is_nil(text:find(needle, 1, true))
+            end
+            for _, needle in ipairs(resolution) do
+                assert.is_nil(text:find(needle, 1, true))
+            end
+        end
+    end)
 
     if ffi_ok and type(real_ffi) == "table" and real_ffi.new then
         it("uses real LuaJIT cdata for binary copying and finalizer detachment", function()

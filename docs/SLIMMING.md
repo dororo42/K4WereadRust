@@ -60,9 +60,12 @@ manifest 已按 K5 实测修订：CJK=`noto/NotoSansCJKsc-Regular.otf`，西文=
    python3 tools/slim_koreader.py <src> <dst>
    python3 tools/check_slim.py <dst>
    ```
-4. **部署（可逆）**：设备上 `mv /mnt/us/koreader /mnt/us/koreader.bak-<date>` 后
-   rsync 副本上去，重启 KOReader 冒烟（书架、开书、翻页、样式面板、Menu、Exit）。
-   回滚 = 删瘦身后 `mv koreader.bak-<date> koreader` 回来。
+4. **部署（可逆）**：当前推荐 `tools/k5_slim_deploy.sh` 设备侧四段式（见上方「K5 部署实录」），
+   回滚用 `sh tools/k5_slim_deploy.sh rollback`。下列 rsync 流程是**早期方案**，仅适用于
+   已把精简副本拉回本机的场景，二者不要混用：
+   - 设备上 `mv /mnt/us/koreader /mnt/us/koreader.bak-<date>` 后 rsync 副本上去，
+     重启 KOReader 冒烟（书架、开书、翻页、样式面板、Menu、Exit）。
+   - 回滚 = 删瘦身后 `mv koreader.bak-<date> koreader` 回来。
 5. **真机验收清单**：weread-only 入口直达书 / Reading style 菜单打开 ConfigDialog /
    字号字体行距调整且退出重进保持 / B-3 之外无网络回归 / crash.log 无新栈。
 

@@ -1,6 +1,8 @@
 #!/bin/sh
 # K5 slim deploy — device-side surgical deployment with one-command rollback.
-# Derived from tools/slim_manifest.json (K5 revision 2026-11-08).
+# KEEP_PLUGINS/KEEP_FONTS 是 tools/slim_manifest.json 的设备侧副本（设备无 Python）。
+# 两份清单由 tools/test_slim.py 的 test_deploy_keep_lists_match_manifest 校验一致；
+# 改 manifest 必须同步改这里，否则部署结果与 check_slim 门禁脱节。
 # Usage: k5_slim_deploy.sh {dryrun|execute|rollback|status}
 set -u
 
@@ -67,8 +69,9 @@ verify() {
   [ -d "$KR/settings" ] || { echo "FAIL: settings/ missing"; fail=1; }
   [ -f "$KR/settings/weread.credentials.lua" ] || echo "WARN: settings/weread.credentials.lua not at expected path (metadata check only)"
   [ -d "$KR/weread/cache" ] || echo "WARN: weread/cache missing"
-  [ -d "$KR/fonts/freefont" ] && { echo "FAIL leak: fonts/freefont"; fail=1; }
-  [ -d "$KR/fonts/urw" ] && { echo "FAIL leak: fonts/urw"; fail=1; }
+  # 泄漏判定只依赖 $LIST 逐项检查（上面 63-66 行）。不要用目录存在与否断言：
+  # KEEP_FONTS 保留了 freefont/FreeSans.ttf 等文件，目录必然存在，旧断言会让
+  # 任何合规产物都被判 VERIFY FAIL。
   ( cd "$KR" && LD_LIBRARY_PATH="$KR/libs" ./luajit -e 'print("SMOKE ok", jit.version)' ) || { echo "FAIL: luajit smoke"; fail=1; }
   if [ "$fail" = 0 ]; then echo "VERIFY: PASS"; else echo "VERIFY: FAIL"; fi
   return $fail
@@ -145,13 +148,20 @@ cmd_rollback() {
   echo "== K5 SLIM ROLLBACK $(date) =="
   [ -d "$BAK" ] || { echo "REFUSE: no backup at $BAK"; exit 1; }
   if koreader_running; then echo "REFUSE: koreader running"; exit 1; fi
+  # 先把当前树改名保留，再恢复备份：任一 mv 失败都还有完整副本，
+  # 不出现「已 rm -rf 原树但备份还在」的破坏性窗口。
+  FAILED="$KR.failed-$(date +%Y%m%d%H%M%S)"
   if [ -e "$KR" ]; then
-    echo "removing slim tree $KR"
-    rm -rf "$KR"
+    echo "keeping slim tree as $FAILED"
+    mv "$KR" "$FAILED" || { echo "FATAL: cannot move current tree aside"; exit 1; }
   fi
-  mv "$BAK" "$KR" || { echo "FATAL: mv backup failed, inspect manually"; exit 1; }
+  if ! mv "$BAK" "$KR"; then
+    echo "FATAL: mv backup failed; restoring $FAILED"
+    [ -e "$FAILED" ] && mv "$FAILED" "$KR"
+    exit 1
+  fi
   sync
-  echo "ROLLED BACK: original tree restored"
+  echo "ROLLED BACK: original tree restored (slim tree kept at $FAILED)"
   md5sum "$KR/luajit" 2>/dev/null
 }
 

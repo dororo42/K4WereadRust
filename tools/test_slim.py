@@ -3,8 +3,10 @@
 
 运行: python3 tools/test_slim.py   （在仓根执行）
 """
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -306,6 +308,81 @@ class SlimTests(unittest.TestCase):
             write_manifest(manifest_path, manifest)
             self.assert_slim(src, dst, manifest_path)
             self.assert_read_only_run(tmp, [CHECK, dst, "--manifest", manifest_path], success=True)
+
+    def deploy_probe(self, tmp, manifest):
+        """把设备侧脚本的路径常量改指向合成树，并让默认分支执行 verify()。"""
+        with open(os.path.join(TOOLS, "k5_slim_deploy.sh"), encoding="utf-8") as fh:
+            body = fh.read()
+        kr = os.path.join(tmp, "koreader")
+
+        def touch(rel):
+            path = os.path.join(kr, rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as fh:
+                fh.write(b"")
+
+        for name in manifest["keep_plugins"]:
+            touch(os.path.join("plugins", name, "main.lua"))
+        for name in manifest["keep_fonts"]:
+            touch(os.path.join("fonts", name))
+        for directory in ("settings", "weread/cache", "libs"):
+            os.makedirs(os.path.join(kr, directory), exist_ok=True)
+        touch("koreader.sh")
+        luajit = os.path.join(kr, "luajit")
+        with open(luajit, "w", encoding="utf-8") as fh:
+            fh.write("#!/bin/sh\nexit 0\n")
+        os.chmod(luajit, 0o755)
+        with open(luajit, "rb") as fh:
+            digest = hashlib.md5(fh.read()).hexdigest()
+        listing = os.path.join(tmp, "delete.txt")
+        with open(listing, "w", encoding="utf-8") as fh:
+            fh.write("")
+
+        constants = {
+            "KR": kr,
+            "BAK": os.path.join(tmp, "backup"),
+            "LIST": listing,
+            "LUAJIT_MD5": digest,
+        }
+        lines = []
+        for line in body.splitlines():
+            match = re.match(r"^(KR|BAK|LIST|LUAJIT_MD5)=", line)
+            if match:
+                lines.append(f"{match.group(1)}={constants[match.group(1)]}")
+            elif line.startswith('  *)        echo "usage:'):
+                lines.append("  *)        verify ;;")
+            else:
+                lines.append(line)
+        probe = os.path.join(tmp, "probe.sh")
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        return probe, kr
+
+    def test_deploy_keep_lists_match_manifest(self):
+        with open(os.path.join(TOOLS, "slim_manifest.json"), encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        with open(os.path.join(TOOLS, "k5_slim_deploy.sh"), encoding="utf-8") as fh:
+            body = fh.read()
+        for key, var in (("keep_plugins", "KEEP_PLUGINS"), ("keep_fonts", "KEEP_FONTS")):
+            match = re.search(rf'^{var}="([^"]*)"$', body, re.M)
+            self.assertIsNotNone(match, f"{var} not found in deploy script")
+            self.assertEqual(set(manifest[key]), set(match.group(1).split()),
+                             f"{var} drifted from slim_manifest.json")
+
+    def test_deploy_verify_accepts_kept_freefont_dir(self):
+        # F-01 回归：KEEP_FONTS 保留 freefont/* 时目录必然存在，
+        # verify() 不得再以「目录存在」判泄漏。
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(TOOLS, "slim_manifest.json"), encoding="utf-8") as fh:
+                manifest = json.load(fh)
+            probe, kr = self.deploy_probe(tmp, manifest)
+            self.assertTrue(os.path.isdir(os.path.join(kr, "fonts", "freefont")))
+            result = subprocess.run(["sh", probe, "verify"],
+                                    capture_output=True, text=True, timeout=15)
+            output = result.stdout + result.stderr
+            self.assertNotIn("FAIL leak: fonts/freefont", output)
+            self.assertIn("VERIFY: PASS", output)
+            self.assertEqual(result.returncode, 0, output)
 
 
 if __name__ == "__main__":

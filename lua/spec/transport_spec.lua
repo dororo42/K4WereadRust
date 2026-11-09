@@ -83,6 +83,10 @@ describe("weread.lib.transport deterministic selection", function()
             assert.equals(0, state.probes)
         end)
     end
+    local function fallback_reason(chosen)
+        -- 显式强制 k4tls 失败时给出可检索原因；auto 保持原有静默回退文本。
+        return chosen == "k4tls" and "k4tls-unavailable-fallback" or "luasec-fallback"
+    end
     for _, chosen in ipairs({ "auto", "k4tls" }) do
         it("honors explicit " .. chosen .. " selection", function()
             local transport = require(module_name)
@@ -90,6 +94,7 @@ describe("weread.lib.transport deterministic selection", function()
             local backend, reason = transport.resolve()
             assert.equals(k4tls, backend)
             assert.equals("k4tls", reason)
+            assert.equals("k4tls", transport.last_reason)
             check_request(transport, true)
         end)
         it("falls back if " .. chosen .. " cannot load the library", function()
@@ -98,7 +103,8 @@ describe("weread.lib.transport deterministic selection", function()
             transport.backend = chosen
             local backend, reason = transport.resolve()
             assert.is_nil(backend)
-            assert.equals("luasec-fallback", reason)
+            assert.equals(fallback_reason(chosen), reason)
+            assert.equals(reason, transport.last_reason)
             check_request(transport, false)
         end)
         it("falls back if " .. chosen .. " cannot load the k4tls module", function()
@@ -107,11 +113,24 @@ describe("weread.lib.transport deterministic selection", function()
             transport.backend = chosen
             local backend, reason = transport.resolve()
             assert.is_nil(backend)
-            assert.equals("luasec-fallback", reason)
+            assert.equals(fallback_reason(chosen), reason)
             check_request(transport, false)
             assert.equals(0, state.probes)
         end)
     end
+    it("records a diagnostic reason when k4tls is forced but unavailable", function()
+        options.available = false
+        local transport = require(module_name)
+        local backend, reason = transport.resolve()
+        assert.is_nil(backend)
+        assert.equals("luasec", reason)
+        env = "k4tls"
+        backend, reason = transport.resolve()
+        assert.is_nil(backend)
+        assert.equals("k4tls-unavailable-fallback", reason)
+        assert.equals(reason, transport.last_reason)
+        check_request(transport, false)
+    end)
     for _, chosen in ipairs({ "auto", "k4tls", "luasec", "typo" }) do
         it("honors the environment override " .. chosen, function()
             env = chosen
