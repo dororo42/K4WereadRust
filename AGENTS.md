@@ -31,7 +31,7 @@ K4weread Phase 1 工程仓（评估报告 §七 分期）：**无 fork 的 Rust 
 ## Current Handoff
 
 - Latest: `handoffs/2026-11-09-214722-k4wereadrust-ci-gates/HANDOFF.md`
-- Branch: main @ cc36a76
+- Branch: main @ 1b13d74
 - Status: CI 门禁全绿（F-09 关闭，run 42629289540）；CI 产物已替换设备 .so（8b89393a，备份 .pre-ci）；测试 A 冒烟 PASS（-2012 归因服务端会话过期，与 k4tls 无关）；方案 B 浸泡进行中（2026-11-09 起，设备 koreader.sh env 注入态 md5 9ffc2f33——浸泡期设备非默认后端，浸泡三件套冻结：k4tls.lua 30a9db1a / transport.lua 6346dd22 / libk4tls.so 8b89393a）；lua 镜像再对齐插件仓 HEAD（k4tls.lua aa24b9c5 内置库优先 + spec 加载顺序断言对调，host 门禁 67/67 绿）——设备 shim 漂移为翻闸后动作；插件仓 v9.10/v9.11 已发版（Latest v9.11，run 42825530616），设备运行时差集（qr_login/_meta/main）外科手术式同步进行中；翻闸前置仅剩用户决策
 
 任何 agent 开始工作前，先读上面的 HANDOFF.md。这份指针由 orbital_handoff 维护，手工交接时请同步更新。
