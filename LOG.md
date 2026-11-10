@@ -177,3 +177,11 @@
 - 本轮浸泡栈位：CI 产物 .so（8b89393a…）+ 新版 lua（30a9db1a/6346dd22）——设备首次以完整语义栈跑 k4tls。
 - 浸泡期证据口径：crash.log 每会话 `ffi.load` 两行 + ProgressSync/ReadReport 活动与错误、`last_reason` 诊断；已知前置：weread 会话已于 14:57 起过期（-2012），用户需在插件内重新登录，写请求才恢复。
 - 回滚：删除注入两行即恢复 949c2f8b 基线（默认 LuaSec）。
+
+## 2026-11-10 — lua 镜像再对齐插件仓 HEAD（k4tls.lua aa24b9c5 内置库优先）+ 两仓状态核实收口
+
+- 为什么：插件仓 v9.10/v9.11 批次吸收了 k4tls.lua 上游复审项 🟢-8（ac34e11"内置库优先"：ffi.load 搜索顺序改为模块同目录 libk4tls.so 优先 → 全局名 "k4tls"，防系统同名旧库静默遮蔽），本仓 lua/ 镜像落后于插件仓 HEAD。
+- 同步方式（TDD）：cp 插件仓 aa24b9c5 → `lua/k4tls.lua` 后先跑红基线——k4tls_spec.lua:151 加载顺序断言期望旧序（"k4tls" 先于模块路径），恰好 2 例失败；对调断言（模块路径在前）后 `lua5.1 tools/test_k4tls_lua.lua` 67 tests, 67 passed，`luac5.1 -p` 全绿。本仓独有的 -18/-19 词表测试保留，未整文件覆盖插件 spec。
+- 设备侧口径：浸泡三件套冻结不动（k4tls.lua 30a9db1a / transport.lua 6346dd22 / libk4tls.so 8b89393a）——浸泡证据链以开始时组合为准；k4tls.lua shim 漂移（30a9db1a → aa24b9c5）列为翻闸后动作（设备上可证明 no-op：裸名 ffi.load 本来就失败）。
+- 设备运行时同步：插件仓已发版 v9.10（898dde8）/ v9.11（66ca115，Latest，run 42825530616）；设备运行时差集 = qr_login.lua（3fd3861b，U17-1/U17-2 + v9.10 提示条并入 0.2s 延迟闭包）+ _meta/main 版本字面量。已挂持久监视器做外科手术式同步（仅推这 3 个文件，.pre-v911 备份，SOAK-INTACT 校验浸泡三件套未被触碰），等 K5（192.168.2.157:2222）上线窗口。
+- 结论：翻闸前置维持"仅剩用户决策"；翻闸后动作清单新增"设备 shim 升 aa24b9c5 与 v9.11 对齐"。U17 真机验收（弱网扫码、二维码四角完整、Back/Menu 即时）待用户按键确认。
