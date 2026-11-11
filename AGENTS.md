@@ -31,7 +31,7 @@ K4weread Phase 1 工程仓（评估报告 §七 分期）：**无 fork 的 Rust 
 ## Current Handoff
 
 - Latest: `handoffs/2026-11-09-214722-k4wereadrust-ci-gates/HANDOFF.md`
-- Branch: main @ 1b13d74
+- Branch: main @ b4b41d4
 - Status: **翻闸线闭环**——R4 bench PASS（k4tls 0.837s vs LuaSec 0.866s，插件仓 01dd053）后用户批准翻闸（2026-11-10，koreader.sh env 注入为常态）；K5 = v9.12 + k4tls 生产 + shim aa24b9c5（加载一行化，🟢-8 真机生效；生产证据 2026-11-11 核实：全日志 0 真实 k4tls 错误、11-10 23:57 会话弱网超时被 U17-1 接住→登录完成→relogin 链实证）；K4（B00E）= v9.12 全量（无 .so，LuaSec 默认，用户实测 D 系列通过）；lua 镜像 67/67 绿（1b13d74）；插件仓 v9.12 = Latest（db4da82，run 42840753440）；剩 D11 两观察点（用户日常）
 
 任何 agent 开始工作前，先读上面的 HANDOFF.md。这份指针由 orbital_handoff 维护，手工交接时请同步更新。
