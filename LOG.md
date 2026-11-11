@@ -193,3 +193,10 @@
 - 设备收敛：K5 = v9.12（qr_login 01dd9c19 / _meta 32ad6dd7 / main 16d675ab，与仓/Release 逐字一致）+ k4tls 生产 + shim aa24b9c5；K4（B00E）= v9.12 全量（无 .so，默认 LuaSec，k4tls 休眠），用户实测 D 系列通过（crash.log 0 ERROR，wantread 瞬态重试、relogin 链实证）。K4 部署项在插件仓交接文档闭环（done）。
 - 浸泡线结论：浸泡三件套冻结口径随翻闸成为历史；R4 bench PASS（k4tls 0.837s vs LuaSec 0.866s）后用户批准翻闸，翻闸后设备无不良记录。
 - 结论：**Phase 1 网络组件线全面闭环**（编译/CI/基准/真机/翻闸生产）。剩 D11 两观察点（用户日常）。
+
+## 2026-11-11 · libk4tls.so release 资产化（weread_K4 分发链路打通）
+
+- **为什么**：weread_K4.koplugin 的 libk4tls.so 无分发渠道（不在 git/Release zip，仅 11-08 手工部署 K5），用户拍板 .so 分发选 2（CI 交叉编译）——侦察发现本仓 CI 已有 so-armel-glibc job（F-09），落地为打通链路。
+- **改了什么（本仓，仅 release 资产）**：release `libk4tls-v0.1.0`（tag + 资产 libk4tls.so）——CI 产物（run 42629289540 so-armel-glibc job），md5 `8b89393a` 与 K5/K4 现役 .so 逐字一致（现役即 CI artifact 来源实证）。无代码变更。
+- **对端（weread_K4.koplugin c67d305）**：release.yml fetch（匿名下载 + sha256 固化 `edb6dc76…` 校验）+ build_release.sh 豁免/追加修正 + ci.yml 资产哨兵；本地全链模拟通过（zip 含 .so），CI 绿 run 43118438330。**weread_K4 下次发版起 Release zip 自带 libk4tls.so**。
+- **验证记录**：CI 产物 vs 现役 md5 一致；两台真机（K5 0.837s / K4 0.833s vs LuaSec 0.866s/0.921s）功能与性能已验证。
