@@ -23,7 +23,7 @@ K4weread Phase 1 工程仓（评估报告 §七 分期）：**无 fork 的 Rust 
 - 构建配方沿 k4refresh（~/work/k4refresh，v0.1.10 真机实证）：target `armv7-unknown-linux-musleabihf`，cdylib+rlib，release profile `opt-level="s"` + lto + strip，panic 不设 abort（FFI 边界 catch_unwind，内部异常返回 -99，不拖死宿主 KOReader）。
 - K4 设备：MX50 单核 Cortex-A8，250MB RAM，FW 4.1.4；KOReader v2026.07.1（K4 世代冻结）；k4refresh 硬浮点 musl 静态二进制真机可跑 → musleabihf 是已验证目标。
 - weread_K4.koplugin（~/weread_K4.koplugin，已发版 v9.10/v9.11，设备运行时差集同步中）：`weread/lib/client.lua` 是 FFI 接入点（socket.http + LuaSec + socketutil 超时/限额语义）；B-3 mock 网关 `dev/mock_gateway.py` 把 `https://*.weread.qq.com` 重定向到测试源，可驱动真实传输层。k4tls/transport 绑定镜像已双向同步（k4tls.lua aa24b9c5 / transport.lua 6346dd22，插件副本与本仓 lua/ 逐字节一致）；该仓有并行在制品（only_mode/library 等），只读不改需协调。
-- 集成纪律：client.lua 改动落在 weread_K4.koplugin 仓（445 spec 是护栏），本仓提供 FFI 绑定 + 补丁 + 文档；传输后端默认 `luasec`，显式 `auto`/`k4tls` 才尝试候选库，真机 bench 通过前不得翻默认值（R2/R4 与登录态完整同步验收均已通过，K5；翻闸前置 Rust 编译验证 + 双仓 lua 同步均已完成，2026-11-09 起方案 B 浸泡进行中——设备 env 注入态，待用户翻闸决策）。
+- 集成纪律：client.lua 改动落在 weread_K4.koplugin 仓（445 spec 是护栏），本仓提供 FFI 绑定 + 补丁 + 文档；R4 bench PASS 后用户批准翻闸——2026-11-10 起 K5 生产 k4tls（koreader.sh env 常态注入，shim aa24b9c5），浸泡线闭环，LuaSec 保留为显式回退（`WEREAD_TLS_BACKEND=luasec`）。
 - ring 交叉编译需要 musl 目标 C 编译器（本机 x-tools 只有 gnu-eabi）——`k4tls/build.sh` 含下载/校验步骤；GitHub TLS 失败走 LAN 代理 `http://192.168.2.153:16492`。
 - rustup 在 `~/.cargo/bin`（PATH 未含），armv7-musleabihf std 已安装。
 - 设备 SSH：`root@<IP>:2222`（KOReader dropbear），设备间歇在线（DHCP 漂移 + USB 拔插）。
@@ -32,6 +32,6 @@ K4weread Phase 1 工程仓（评估报告 §七 分期）：**无 fork 的 Rust 
 
 - Latest: `handoffs/2026-11-09-214722-k4wereadrust-ci-gates/HANDOFF.md`
 - Branch: main @ 1b13d74
-- Status: CI 门禁全绿（F-09 关闭，run 42629289540）；CI 产物已替换设备 .so（8b89393a，备份 .pre-ci）；测试 A 冒烟 PASS（-2012 归因服务端会话过期，与 k4tls 无关）；方案 B 浸泡进行中（2026-11-09 起，设备 koreader.sh env 注入态 md5 9ffc2f33——浸泡期设备非默认后端，浸泡三件套冻结：k4tls.lua 30a9db1a / transport.lua 6346dd22 / libk4tls.so 8b89393a）；lua 镜像再对齐插件仓 HEAD（k4tls.lua aa24b9c5 内置库优先 + spec 加载顺序断言对调，host 门禁 67/67 绿）——设备 shim 漂移为翻闸后动作；插件仓 v9.10/v9.11 已发版（Latest v9.11，run 42825530616），设备运行时差集（qr_login/_meta/main）外科手术式同步进行中；翻闸前置仅剩用户决策
+- Status: **翻闸线闭环**——R4 bench PASS（k4tls 0.837s vs LuaSec 0.866s，插件仓 01dd053）后用户批准翻闸（2026-11-10，koreader.sh env 注入为常态）；K5 = v9.12 + k4tls 生产 + shim aa24b9c5（加载一行化，🟢-8 真机生效；生产证据 2026-11-11 核实：全日志 0 真实 k4tls 错误、11-10 23:57 会话弱网超时被 U17-1 接住→登录完成→relogin 链实证）；K4（B00E）= v9.12 全量（无 .so，LuaSec 默认，用户实测 D 系列通过）；lua 镜像 67/67 绿（1b13d74）；插件仓 v9.12 = Latest（db4da82，run 42840753440）；剩 D11 两观察点（用户日常）
 
 任何 agent 开始工作前，先读上面的 HANDOFF.md。这份指针由 orbital_handoff 维护，手工交接时请同步更新。

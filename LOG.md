@@ -185,3 +185,11 @@
 - 设备侧口径：浸泡三件套冻结不动（k4tls.lua 30a9db1a / transport.lua 6346dd22 / libk4tls.so 8b89393a）——浸泡证据链以开始时组合为准；k4tls.lua shim 漂移（30a9db1a → aa24b9c5）列为翻闸后动作（设备上可证明 no-op：裸名 ffi.load 本来就失败）。
 - 设备运行时同步：插件仓已发版 v9.10（898dde8）/ v9.11（66ca115，Latest，run 42825530616）；设备运行时差集 = qr_login.lua（3fd3861b，U17-1/U17-2 + v9.10 提示条并入 0.2s 延迟闭包）+ _meta/main 版本字面量。已挂持久监视器做外科手术式同步（仅推这 3 个文件，.pre-v911 备份，SOAK-INTACT 校验浸泡三件套未被触碰），等 K5（192.168.2.157:2222）上线窗口。
 - 结论：翻闸前置维持"仅剩用户决策"；翻闸后动作清单新增"设备 shim 升 aa24b9c5 与 v9.11 对齐"。U17 真机验收（弱网扫码、二维码四角完整、Back/Menu 即时）待用户按键确认。
+
+## 2026-11-11 — 翻闸落地核实 + 两设备 v9.12 收敛（浸泡/翻闸线闭环）
+
+- 状态核实（一手证据）：K5 生产已翻闸（koreader.sh `export WEREAD_TLS_BACKEND=k4tls`，插件仓并行批次 2026-11-10 执行）且 shim 已升 aa24b9c5（内置库优先——加载只剩一行 `ffi.load: plugins/.../libk4tls.so`，裸名失败尝试消失，🟢-8 真机生效）；全日志 0 条真实 k4tls 错误（此前 73 条宽匹配均为 `fallback=false` INFO / credential_store 降级 WARN）。
+- k4tls 生产链路实证（11-10 23:57 会话）：-2012 会话过期（传输层 HTTP 200 正常送达，认证层旧模式）→ account_cleared 停报 → QR 轮询遇 k4tls 弱网超时（os error 11）→ U17-1 语义接住，5 秒后登录完成 → account_cleared→relogin 同秒重启上报 → 23:59:04 read report success——浸泡期担心的弱网/会话过期场景全部按设计工作。
+- 设备收敛：K5 = v9.12（qr_login 01dd9c19 / _meta 32ad6dd7 / main 16d675ab，与仓/Release 逐字一致）+ k4tls 生产 + shim aa24b9c5；K4（B00E）= v9.12 全量（无 .so，默认 LuaSec，k4tls 休眠），用户实测 D 系列通过（crash.log 0 ERROR，wantread 瞬态重试、relogin 链实证）。K4 部署项在插件仓交接文档闭环（done）。
+- 浸泡线结论：浸泡三件套冻结口径随翻闸成为历史；R4 bench PASS（k4tls 0.837s vs LuaSec 0.866s）后用户批准翻闸，翻闸后设备无不良记录。
+- 结论：**Phase 1 网络组件线全面闭环**（编译/CI/基准/真机/翻闸生产）。剩 D11 两观察点（用户日常）。
