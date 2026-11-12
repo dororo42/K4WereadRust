@@ -1,5 +1,7 @@
 # k4tls / Phase 1 门禁与交叉产物构建（F-09）。
 # Rust 编译产物一律由本 workflow 产出，本机只做源码级检查——README「构建纪律」的执行点。
+# 2026-11-12 三仓审查后追加：PR 触发、最小权限、checkout 固定 SHA、
+# fmt 观察步骤（非阻断）、跨仓 Lua 镜像门禁；详见本仓 HANDOFF.md。
 #
 # 工具链供应链：
 # - rustc/cargo 固定 1.98.1（与本地验收构建同版本）。
@@ -14,7 +16,11 @@ name: ci
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -25,11 +31,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: rust 1.98.1（固定）
         run: |
-          rustup toolchain install 1.98.1 --profile minimal --component clippy
+          rustup toolchain install 1.98.1 --profile minimal --component clippy --component rustfmt
           rustup default 1.98.1
+      # 2026-11-12 audit (F-11): non-blocking observation. A full formatting
+      # batch is still pending (cargo fmt --check currently shows 6 historical
+      # diffs), so this becomes a hard gate only after that batch lands.
+      - name: cargo fmt --check (observation, non-blocking)
+        working-directory: k4tls
+        continue-on-error: true
+        run: cargo fmt --check
       - name: cargo test --locked
         working-directory: k4tls
         run: cargo test --locked
@@ -42,6 +55,14 @@ jobs:
           sudo apt-get install -y -qq lua5.1
           luac5.1 -p $(git ls-files '*.lua')
           lua5.1 tools/test_k4tls_lua.lua
+      # 2026-11-12 audit (I-1): the two Lua bindings must stay byte-identical
+      # to the plugin repo's production copies. Track peer main and log the
+      # peer commit so a drift is both detected and reproducible.
+      - name: Lua mirror sync (weread_K4.koplugin)
+        run: |
+          git clone --depth 1 https://github.com/dororo42/weread_K4.koplugin.git ../weread_K4.koplugin
+          echo "::notice::peer plugin HEAD = $(git -C ../weread_K4.koplugin rev-parse HEAD)"
+          python3 tools/check_lua_mirror.py --peer-repo ../weread_K4.koplugin
       - name: python 门禁（slim 自测）
         run: python3 -B tools/test_slim.py
       - name: shell 语法门禁
@@ -51,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: rust 1.98.1（固定）+ musleabihf target
         run: |
           rustup toolchain install 1.98.1 --profile minimal
@@ -82,7 +103,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: rust 1.98.1（固定）+ gnueabi target
         run: |
           rustup toolchain install 1.98.1 --profile minimal

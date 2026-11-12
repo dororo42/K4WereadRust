@@ -147,6 +147,23 @@ describe("weread.lib.transport deterministic selection", function()
         transport.backend = "k4tls"
         check_request(transport, true)
     end)
+    -- 2026-11-12 (I-1): an explicit menu selection must outrank the deployment
+    -- env var, otherwise the settings toggle can never beat koreader.sh's export.
+    it("lets an explicit menu choice outrank the deployment env", function()
+        env = "luasec"
+        local transport = require(module_name)
+        transport.backend = "k4tls"
+        transport.backend_explicit = true
+        check_request(transport, true)
+        assert.equals(1, state.probes)
+    end)
+    it("honors env only when no explicit choice was made", function()
+        env = "k4tls"
+        local transport = require(module_name)
+        assert.is_false(transport.backend_explicit)
+        check_request(transport, true)
+        assert.equals(1, state.probes)
+    end)
     for _, backend in ipairs({ "luasec", "auto", "k4tls" }) do
         it("returns nil,error when no backend is available for " .. backend, function()
             options.available, options.missing_http = false, true

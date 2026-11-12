@@ -9,7 +9,8 @@
 # 前置:
 #   - rustup target add armv7-unknown-linux-musleabihf arm-unknown-linux-gnueabi
 #   - musl 交叉 gcc: ~/x-tools/arm-linux-musleabihf-cross/（musl.cc 包，
-#     GitHub TLS 失败走 LAN 代理 http://192.168.2.153:16492）
+#     GitHub TLS 失败走 LAN 代理，默认 http://192.168.2.153:16492，
+#     可用 K4_LAN_PROXY 覆盖；本脚本只提示不下载，下载/校验在 CI workflow）
 #   - armel 交叉 gcc: ~/x-tools/arm-kindle5-linux-gnueabi/（koxtoolchain 产物）
 # 注：Rust 编译产物统一由 CI/授权环境执行，本机只做源码级检查。
 set -e
@@ -27,12 +28,14 @@ cd "$HERE"
 
 CC_MUSL="$HOME/x-tools/arm-linux-musleabihf-cross/bin/arm-linux-musleabihf-gcc"
 CC_ARMEL="$HOME/x-tools/arm-kindle5-linux-gnueabi/bin/arm-kindle5-linux-gnueabi-gcc"
+# 仅用于缺工具链时的下载提示文本；可被部署环境覆盖。
+LAN_PROXY="${K4_LAN_PROXY:-http://192.168.2.153:16492}"
 
 build_bench() {
     rustup target add "$TARGET_MUSL"
     if [ ! -x "$CC_MUSL" ]; then
         echo "[build.sh] 缺 musl 交叉 gcc（ring C 部分需要）:" >&2
-        echo "  musl.cc/arm-linux-musleabihf-cross.tgz（GitHub TLS 失败走 LAN 代理 http://192.168.2.153:16492）" >&2
+        echo "  musl.cc/arm-linux-musleabihf-cross.tgz（GitHub TLS 失败走 LAN 代理 $LAN_PROXY，可用 K4_LAN_PROXY 覆盖）" >&2
         echo "  下载后必须核对 musl.cc 官方 sha256 再解压：供应链校验不可省略。" >&2
         exit 3
     fi
@@ -54,6 +57,8 @@ build_so() {
     fi
     export CC_arm_unknown_linux_gnueabi="$CC_ARMEL"
     export AR_arm_unknown_linux_gnueabi="${CC_ARMEL%-gcc}-ar"
+    # .cargo/config.toml 里的绝对路径只是本机示例；用 env 覆盖，避免换机即断。
+    export CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABI_LINKER="$CC_ARMEL"
     cargo build --locked --release --target "$TARGET_ARMEL" --lib
     echo "so 产物:"
     file "target/$TARGET_ARMEL/release/libk4tls.so" | sed 's/^/  /'

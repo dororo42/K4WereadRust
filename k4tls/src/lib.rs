@@ -102,6 +102,9 @@ unsafe fn cstr_arg<'a>(p: *const libc::c_char) -> Option<&'a str> {
     std::ffi::CStr::from_ptr(p).to_str().ok()
 }
 
+// 2026-11-12 audit (F-12): returns a static NUL-terminated literal; there is
+// no allocation or panic path, so this export has no catch_unwind wrapper.
+// Any future fallible work here MUST be wrapped (or the panic crosses FFI).
 #[no_mangle]
 pub extern "C" fn k4tls_version() -> *const libc::c_char {
     concat!("k4tls ", env!("CARGO_PKG_VERSION"), " rustls-0.23/ring\0").as_ptr()
@@ -218,6 +221,13 @@ fn perform_inner(req: &K4TlsRequest) -> Result<http::Response, Failure> {
 ///
 /// `out` 必须是此前 k4tls_perform 返回 0 时填充的同一指针（或为空），
 /// 且其 response 内存未被释放过。
+///
+/// 2026-11-12 audit (F-12): unlike k4tls_perform, this export has NO
+/// catch_unwind guard, so an invalid `out` or a panic in Box::from_raw would
+/// cross the FFI boundary. Callers must honour the contract above; the Lua
+/// binding registers ffi.gc AND frees explicitly, relying on the pointer being
+/// nulled here to avoid a double free. Hardening (wrap in catch_unwind, add
+/// repeated-free / null-pointer FFI tests) is deferred to a CI-verified batch.
 #[no_mangle]
 pub unsafe extern "C" fn k4tls_free_response(out: *mut K4TlsResponse) {
     if out.is_null() {

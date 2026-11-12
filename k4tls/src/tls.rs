@@ -25,6 +25,11 @@ pub enum TrustError {
 }
 
 pub fn build_config(extra_pem: Option<&[u8]>) -> Result<ClientConfig, TrustError> {
+    // 2026-11-12 audit (F-12): this expect is reachable from k4tls_perform,
+    // whose catch_unwind turns it into rc=-99 instead of unwinding across the
+    // FFI boundary; the response is lost though. A later hardening batch should
+    // return TrustError instead. No local Rust builds are allowed by project
+    // discipline, so that change needs CI verification before landing.
     let provider = rustls::crypto::ring::default_provider();
     let builder = ClientConfig::builder_with_provider(provider.into())
         .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])

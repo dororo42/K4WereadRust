@@ -200,3 +200,12 @@
 - **改了什么（本仓，仅 release 资产）**：release `libk4tls-v0.1.0`（tag + 资产 libk4tls.so）——CI 产物（run 42629289540 so-armel-glibc job），md5 `8b89393a` 与 K5/K4 现役 .so 逐字一致（现役即 CI artifact 来源实证）。无代码变更。
 - **对端（weread_K4.koplugin c67d305）**：release.yml fetch（匿名下载 + sha256 固化 `edb6dc76…` 校验）+ build_release.sh 豁免/追加修正 + ci.yml 资产哨兵；本地全链模拟通过（zip 含 .so），CI 绿 run 43118438330。**weread_K4 下次发版起 Release zip 自带 libk4tls.so**。
 - **验证记录**：CI 产物 vs 现役 md5 一致；两台真机（K5 0.837s / K4 0.833s vs LuaSec 0.866s/0.921s）功能与性能已验证。
+
+## 2026-11-12 · 三仓代码审查复核意见落地（源码/文档/门禁，未构建、未发版）
+
+- **依据**：`~/reports/2026-11-12-K4weread-三仓代码审查与项目一致性核查报告.md`（I-1…I-8 共 8 类不一致 + F-1…F-13 共 13 项优化）。本批**不改 Rust 运行时逻辑**（FFI 只补契约注释）、不递增版本、不打 tag、不 push、不构建、不上传资产。
+- **改了什么（本仓）**：①`lua/transport.lua` 同步插件仓 `backend_explicit` 语义，`lua/spec/transport_spec.lua` 增 2 例覆盖「菜单显式选择优先于 env」（I-1）；②新增 `tools/check_lua_mirror.py` 并接入 `ci.yml`（I-1/F-11）；③`ci.yml` 补 `pull_request`、`permissions: contents: read`、三处 checkout 固定 SHA、非阻断 `cargo fmt --check` 观察（I-8/F-11）；④`README.md` 去掉重复的 HEAD 基线、统一翻闸/插件版本/「逐字节一致」声明范围、登记 `docs/RELEASE_ASSETS.md`（I-3/I-6/I-7）；⑤`AGENTS.md` 修正「R4 前不翻闸」「逐字节一致」「build.sh 含下载/校验」三处（I-6/I-7）；⑥`docs/INTEGRATION.md` 更正分发方向、标记 client.lua 注释已修、统一 K4 验收时间线、新增三仓协同表（I-5/I-6/I-7）；⑦新增 `docs/RELEASE_ASSETS.md`（资产指纹/兼容矩阵/依赖与同步顺序，I-4/F-10）；⑧`k4tls/build.sh` 增加 linker env 覆盖与可覆盖代理变量，`.cargo/config.toml` 注明绝对路径仅本机示例（F-13）；⑨`k4tls/src/lib.rs`、`src/tls.rs` 补 FFI 边界契约与残余风险注释（F-12）。
+- **复核更正**：审查报告 I-4 曾写「本仓未记录 `edb6dc76…`」；实际 `LOG.md:146,201` 与 `docs/INTEGRATION.md:138` 以 8 位前缀记录，是只按 64 位完整值检索造成的漏检。报告已就地更正；I-4 结论（无完整值清单、无 Release 产出 workflow）不变。
+- **如何验证（本机源码级实跑）**：两个 Lua 绑定镜像 sha256 与插件仓逐字一致（`a4e1c5ed…` / `f0155311…`）；`python3 tools/check_lua_mirror.py --peer-repo` 通过，负向（改一字节）按预期 FAIL；`lua5.1 tools/test_k4tls_lua.lua` **69/69**（改前基线 67/67，新增 2）；`luac5.1 -p $(git ls-files '*.lua')` 全过；`sh -n k4tls/build.sh tools/k5_slim_deploy.sh` 通过；`python3 -B tools/test_slim.py` **13/13 PASS**；新增 Python 脚本 `ast.parse` 通过。`cargo fmt --check` 仍有 6 处历史差异（`http.rs` / `lib.rs` / `transport.rs` / `url.rs`），故 CI 中为非阻断观察步骤。
+- **未落实为代码改动的项**：F-12 的运行时加固（给 `k4tls_version` / `k4tls_free_response` 加 catch_unwind、把 `tls.rs` 的 `.expect` 换成 `Result`、补重复释放/空指针 FFI 用例）——按构建纪律本机不编译 Rust，无法确认，登记为需推送后由 CI 验证的单独批次；`k4tls_perform` 已有 catch_unwind 兜底，未观测到跨 FFI unwind 故障。F-11 的 fmt 硬门禁同理待全量格式化批次。
+- **边界**：未跑 `cargo test` / `clippy`、未编译 `.so`、未连真机、未访问远端 Release；三仓 handoff 套件同批生成（本地 only，不入库）。跨仓改动范围、依赖关系与同步顺序见各仓 HANDOFF.md「三仓协同」节及 `docs/RELEASE_ASSETS.md` §4。

@@ -13,4 +13,7 @@ rustflags = ["-C", "linker-flavor=ld.lld", "-C", "link-self-contained=yes"]
 
 [target.arm-unknown-linux-gnueabi]
 # 全路径：工具链不在 PATH 上，裸名会导致 cargo 链接阶段找不到 gcc。
+# 2026-11-12 (F-13)：此为本机示例值，不是跨机可移植配置。CI 用
+# CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABI_LINKER 覆盖，k4tls/build.sh 亦已导出同名 env；
+# 换机请优先覆盖 env，不要再依赖这条绝对路径。
 linker = "/home/doro/x-tools/arm-kindle5-linux-gnueabi/bin/arm-kindle5-linux-gnueabi-gcc"

@@ -1,9 +1,8 @@
 # P1-A 集成指南：k4tls 接入 weread_K4.koplugin
 
-状态：**插件仓已接线；R4 传输基准已完成（2026-11-08 K5 真实端点 weread.qq.com
-30/30，中位 k4tls 546.6 vs LuaSec 643.1 ms）；登录态完整业务验收已通过（2026-11-09
-K5 真实 KOReader 内 k4tls 全程驱动 ProgressSync/ReadReport，实录见「结论边界」）**。
-默认后端保持 LuaSec；验收经由显式 `WEREAD_TLS_BACKEND=k4tls` 注入完成，验收后已移除恢复默认。
+状态（2026-11-12 更新）：**插件仓已接线；R4 基准 PASS；2026-11-10 K5 翻闸为常态 k4tls；2026-11-12 因 segfault 归因，K5 的 `WEREAD_TLS_BACKEND` 临时改回 `luasec` 做 A/B（下次 KOReader 重启生效，见 `LOG.md` 与 `K4weread/LOG.md`）**。
+历史证据：R4（2026-11-08 K5 真实端点 30/30，中位 546.6 vs 643.1 ms）、登录态完整业务验收（2026-11-09 K5，实录见「结论边界」）。
+**仓库代码默认后端始终是 LuaSec**（`weread/lib/transport.lua` 的 `M.backend`）；设备实际后端由 `WEREAD_TLS_BACKEND` 或插件菜单勾选（v9.13 候选）决定，菜单显式选择优先于 env。
 K5 的测试结果不替代 K4 验收。
 
 ## 架构
@@ -46,11 +45,12 @@ results = { pcall(transport.request, req_opts) }
 
 ## 文件放置（weread_K4.koplugin 仓）
 
-| 源（本仓） | 目标（插件仓） |
-|---|---|
-| `lua/k4tls.lua` | `weread/lib/k4tls.lua` |
-| `lua/transport.lua` | `weread/lib/transport.lua` |
-| `k4tls/target/arm-unknown-linux-gnueabi/release/libk4tls.so` | `weread/lib/libk4tls.so`（可选：缺它自动回退 LuaSec） |
+2026-11-12 审查（I-1 / I-7）后按**实际方向**重写（原先误把本仓 `target/` 产物列为分发源）：
+
+| 方向 | 源 | 目标 | 说明 |
+|---|---|---|---|
+| Lua 绑定 | **插件仓** `weread/lib/k4tls.lua`、`weread/lib/transport.lua` | 本仓 `lua/k4tls.lua`、`lua/transport.lua` | 插件仓是唯一生产来源，本仓为镜像；`tools/check_lua_mirror.py` 校验两个绑定文件逐字节一致（spec 因测试框架不同只做语义对齐） |
+| .so 资产 | K4WereadRust Release `libk4tls-v0.1.0/libk4tls.so` | 插件包内 `weread/lib/libk4tls.so` → 设备插件目录 | 由插件仓 `release.yml:31-36` 打包前匿名下载 + sha256 固化校验，`release.yml:43-44` 断言入包；**不再**从本机 `k4tls/target/` 拷贝。完整指纹与同步顺序见 `docs/RELEASE_ASSETS.md` |
 
 `module-map.json` 增补（N-2 门禁）：
 
@@ -70,10 +70,11 @@ client_redirect_spec.lua 的 preload 模式处理；纯函数测映射，select 
 - 缺省 `"luasec"`；未知值同样回到 LuaSec。显式 `"auto"` 或 `"k4tls"` 才尝试加载候选库。
 - 回滚必须显式设置 `WEREAD_TLS_BACKEND=luasec`；`auto` 不是回滚开关。
 
-> 协调项（2026-11-08 双仓同步核查）：插件仓 `weread/lib/client.lua` 中
-> "k4tls 传输" 注释仍写"默认后端 auto"——那是 d644920 初版设计的旧文；
-> b82d7ed 同步后的实际语义以 `transport.lua` 为准（默认 luasec）。该注释
-> 在插件仓（本仓只读，且有并行在制品），翻闸集成阶段一并修正。
+> 协调项（2026-11-08 提出，**2026-11-12 已修复**，审查项 I-5）：插件仓
+> `weread/lib/client.lua` 的「k4tls 传输」注释曾写「默认后端 auto / R4 通过前
+> 不翻默认」，与 `transport.lua` 的 `backend = "luasec"` 不符（d644920 初版旧文）。
+> 11-12 已改为实际语义：默认 luasec、只有 auto/k4tls 探测库、菜单显式选择
+> 优先于部署 env。保留本条便于追溯，勿再按旧注释理解后端选择。
 
 ## 构建产物（k4tls/build.sh）
 
@@ -138,4 +139,16 @@ timeout 300 sshpass -p '' ssh -p 2222 -o ExitOnForwardFailure=yes -R 127.0.0.1:1
 - CI 门禁（2026-11-09，F-09 关闭）：`.github/workflows/ci.yml` 三 job 全绿（run 42629289540）——host-gates（cargo test --locked / clippy -D warnings / luac -p + lua5.1 全量 / test_slim.py / sh -n）、bench-musleabihf（静态 k4tls-bench 1,135,568 B）、so-armel-glibc（libk4tls.so 1,186,764 B，ELF armel 动态）。rustc 固定 1.98.1；交叉工具链取本仓 release `cross-toolchains` 资产（musl.cc 官方包原样 + koxtoolchain armel）并 sha256 固化（musl.cc 直连 2026-11-09 实证宕机）。CI 版 .so（sha256 edb6dc76…）含 27c8af3/2d25c33 语义修复，与设备现存修复前 .so（md5 978b5739…）尺寸相同内容不同。**已替换（2026-11-09，用户授权）**：设备副本现为 CI 产物（md5 8b89393a…），替换前版本备份于同目录 `libk4tls.so.pre-ci`；设备 LuaJIT 生产路径探针通过（dlopen + version 串正常；CI 产物符号版本上限 GLIBC_2.12 与设备匹配）。
 - 补记（2026-11-10）：插件仓发版 v9.10（K5 全菜单 TouchMenu + QR 物理键提示条，898dde8）与 v9.11（上游 v1.7.0 QR 健壮性 U17-1/U17-2，66ca115，Latest，run 42825530616）；本仓 lua 镜像随之再对齐——`lua/k4tls.lua` 换为插件仓 aa24b9c5（内置库优先：ffi.load 先试模块同目录 libk4tls.so 再试全局名 "k4tls"，防系统同名旧库静默遮蔽；设备上为可证明 no-op），spec 加载顺序断言对调后 host 门禁 67/67 绿。设备浸泡三件套冻结不动（k4tls.lua 30a9db1a / transport.lua 6346dd22 / .so 8b89393a）——浸泡证据链以开始时组合为准，shim 漂移 aa24b9c5 列为翻闸后动作；设备运行时 v9.11 差集（qr_login.lua/_meta/main）由持久监视器外科手术式同步（.pre-v911 备份 + SOAK-INTACT 三件套完整性校验）。
 - 补记（2026-11-11）：**翻闸落地**——R4 bench PASS 后用户批准，koreader.sh 注入 `WEREAD_TLS_BACKEND=k4tls` 为常态（插件仓并行批次执行）；设备 shim 升 aa24b9c5（内置库优先生效：加载一行化，裸名失败尝试消失）；生产证据一手核实（crash.log）：全日志 0 真实 k4tls 错误，11-10 23:57 会话全链（-2012 旧模式 → account_cleared → 弱网超时被 U17-1 接住 → 登录完成 → relogin 重启 → 上报成功）；K5 运行时 v9.12 与仓/Release 零差集；K4（B00E）v9.12 全量部署（无 .so，LuaSec 默认），用户实测通过。
-- 未验证：K4 真机上的 k4tls 链路（B00E 无 .so，LuaSec 默认，k4tls 按设计休眠）、KOReader 应用内非传输层的其余行为；D11 两观察点登记中（用户日常：续期路径脚标同步消失 / 无效 skey 报错路径）。
+- **K4 k4tls 口径统一（2026-11-12）**：上文 `:140` 记 11-11 K4「无 .so，LuaSec 默认」；`K4weread/LOG.md:163-164` 记同日稍晚已从 K5 拷入 .so 并完成 k4tls/LuaSec bench 对照（0.833s vs 0.921s），本仓 `LOG.md:193` 亦记 K4 = v9.12 全量。两者是**同一天的时间线前后**，不是矛盾：11-11 早间无 .so → 当日稍晚拷入并跑 bench。但「K4 真机 k4tls 完整业务链路」仍未按本节验收清单验证，仍属未验证；最新状态以各仓 `LOG.md` 追加节为准。
+- 未验证：KOReader 应用内非传输层的其余行为；D11 两观察点登记中（用户日常：续期路径脚标同步消失 / 无效 skey 报错路径）。
+
+## 三仓协同（2026-11-12 审查后）
+
+| 链 | 方向 | 同步要求 |
+|---|---|---|
+| 握手标记 | K4weread `kual/bin/k4weread.sh`（写）↔ 插件仓 `weread/lib/only_mode.lua`（读+删） | 路径字面量必须同批次改；K4weread `tools/check_marker_path.py --peer-repo` 与插件仓 `spec/only_mode_spec.lua` 双向钉死 |
+| Lua 绑定 | 插件仓 `weread/lib/` → 本仓 `lua/` | 插件仓为源、本仓跟随；`tools/check_lua_mirror.py` 机器校验 |
+| .so 资产 | 本仓 CI / Release → 插件仓 workflow → 设备插件目录 | 见 `docs/RELEASE_ASSETS.md` §4 |
+| 版本 | 三仓独立编号，无机器绑定 | 见 `docs/RELEASE_ASSETS.md` §3 兼容矩阵 |
+
+本仓与 K4weread **无直接代码契约**。三仓改动范围、依赖关系与同步顺序的完整记录见三仓各自 HANDOFF.md 的「三仓协同」节。
