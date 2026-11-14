@@ -4,7 +4,10 @@
 //! 重定向/cookie/超时策略归 Lua 侧（client.lua），与 socketutil 语义对齐：
 //! block_timeout = 单 socket 操作预算；total_timeout = 整请求硬期限。
 
-#[cfg(any(test, all(target_arch = "arm", target_os = "linux", target_env = "gnu")))]
+#[cfg(any(
+    test,
+    all(target_arch = "arm", target_os = "linux", target_env = "gnu")
+))]
 mod auxv;
 
 pub mod codes;
@@ -122,7 +125,10 @@ pub extern "C" fn k4tls_version() -> *const libc::c_char {
 /// - 返回 -99 后不得调用 `k4tls_free_response`
 /// - 本函数不得从信号处理器/多个线程同时写同一 `out` 调用
 #[no_mangle]
-pub unsafe extern "C" fn k4tls_perform(req: *const K4TlsRequest, out: *mut K4TlsResponse) -> libc::c_int {
+pub unsafe extern "C" fn k4tls_perform(
+    req: *const K4TlsRequest,
+    out: *mut K4TlsResponse,
+) -> libc::c_int {
     if req.is_null() || out.is_null() {
         return ERR_INVALID_ARGS;
     }

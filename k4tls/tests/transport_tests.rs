@@ -272,7 +272,14 @@ fn regression_stalled_body_read_maps_timeout_without_string_matching() {
     )
     .unwrap_err();
     assert_eq!(err.code(), k4tls::codes::TIMEOUT, "{err:?}");
-    assert!(start.elapsed() < Duration::from_millis(500));
+    // Weak-network fix semantics: the retry loop now waits out the full
+    // 800ms total deadline instead of aborting at the first ~100ms block
+    // timeout, so "fail fast" no longer applies inside the deadline.
+    assert!(
+        start.elapsed() >= Duration::from_millis(600),
+        "retry loop must keep waiting inside the deadline: {:?}",
+        start.elapsed()
+    );
 }
 
 #[test]
@@ -329,4 +336,41 @@ fn trust_pem_with_bad_pem_maps_handshake_fail() {
         "detail: {}",
         err.detail()
     );
+}
+
+// 2026-11-13 (weak-network fix, K4): the Kindle 4's 2.6-era kernel returns
+// EAGAIN (os error 11) instead of ETIMEDOUT when SO_RCVTIMEO expires on a
+// blocking socket, and DeadlineStream.read had no retry loop — every slow
+// read aborted the whole request, producing the EAGAIN storm + crash loop
+// seen on K4 (2026-11-12/14). Deadline-bounded retries are the fix.
+#[test]
+fn slow_chunked_response_retries_within_deadline() {
+    // 3 chunks at 2500ms intervals; block timeout 2000ms (each read times out
+    // at least once), total deadline 9000ms covers all chunks + TLS handshake.
+    let server = common::TestServer::spawn_chunked(
+        vec![
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n".to_string(),
+            "chunk-one ".to_string(),
+            "chunk-two ".to_string(),
+            "chunk-three".to_string(),
+        ],
+        std::time::Duration::from_millis(2500),
+    );
+    // get() uses the default 2s/6s budgets, which cannot cover 3x2500ms
+    // chunk gaps; this test needs its own deadline budget.
+    let resp = perform(Request {
+        url: &format!("https://127.0.0.1:{}/api", server.addr.port()),
+        method: "GET",
+        headers: vec!["Accept: */*"],
+        body: None,
+        budgets: Budgets {
+            block_timeout: Duration::from_millis(2500),
+            total_deadline: Duration::from_millis(12000),
+        },
+        max_response_bytes: 1 << 20,
+        trust_pem: Some(server.root_pem.as_bytes()),
+    })
+    .expect("slow chunks must complete within the total deadline");
+    assert_eq!(resp.status, 200);
+    assert!(resp.body.starts_with(b"chunk-one"));
 }

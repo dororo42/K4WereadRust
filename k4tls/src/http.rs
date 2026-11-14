@@ -434,12 +434,13 @@ mod tests {
 
     #[test]
     fn serializes_empty_post_with_zero_length() {
-        let s = String::from_utf8(serialize_request("POST", "/x", "h", &[], None).unwrap()).unwrap();
+        let s =
+            String::from_utf8(serialize_request("POST", "/x", "h", &[], None).unwrap()).unwrap();
         assert!(s.contains("Content-Length: 0\r\n"));
         assert!(s.ends_with("Connection: close\r\n\r\n"));
         for method in ["PUT", "PATCH"] {
-            let s =
-                String::from_utf8(serialize_request(method, "/x", "h", &[], None).unwrap()).unwrap();
+            let s = String::from_utf8(serialize_request(method, "/x", "h", &[], None).unwrap())
+                .unwrap();
             assert!(s.contains("Content-Length: 0\r\n"), "{method}");
         }
         let s = String::from_utf8(serialize_request("GET", "/x", "h", &[], None).unwrap()).unwrap();

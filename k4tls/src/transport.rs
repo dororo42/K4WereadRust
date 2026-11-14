@@ -203,28 +203,52 @@ impl DeadlineStream {
     }
 }
 
+impl DeadlineStream {
+    // 2026-11-13 (weak-network fix, K4): the Kindle 4's 2.6-era kernel
+    // returns EAGAIN (os error 11) instead of ETIMEDOUT when SO_RCVTIMEO
+    // expires on a blocking socket, and DeadlineStream.read had no retry
+    // loop — every slow read aborted the whole request, producing the EAGAIN
+    // storm + crash loop seen on K4 (2026-11-12/14). Retry within the total
+    // deadline; only a real deadline expiry surfaces as an error.
+    fn retry_on_timeout<T>(
+        &mut self,
+        mut op: impl FnMut(&mut Self) -> io::Result<T>,
+    ) -> io::Result<T> {
+        loop {
+            match op(self) {
+                Ok(v) => return Ok(v),
+                Err(e) if is_timeout_err(&e) => {
+                    self.budget()?; // deadline exceeded -> real timeout
+                    continue; // else: keep waiting (slow delivery)
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+}
+
 impl Read for DeadlineStream {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        self.socket.set_read_timeout(Some(self.budget()?))?;
-        let result = self.socket.read(out);
-        self.budget()?;
-        result
+        self.retry_on_timeout(|stream| {
+            stream.socket.set_read_timeout(Some(stream.budget()?))?;
+            stream.socket.read(out)
+        })
     }
 }
 
 impl Write for DeadlineStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.socket.set_write_timeout(Some(self.budget()?))?;
-        let result = self.socket.write(buf);
-        self.budget()?;
-        result
+        self.retry_on_timeout(|stream| {
+            stream.socket.set_write_timeout(Some(stream.budget()?))?;
+            stream.socket.write(buf)
+        })
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.socket.set_write_timeout(Some(self.budget()?))?;
-        let result = self.socket.flush();
-        self.budget()?;
-        result
+        self.retry_on_timeout(|stream| {
+            stream.socket.set_write_timeout(Some(stream.budget()?))?;
+            stream.socket.flush()
+        })
     }
 }
 
@@ -241,8 +265,12 @@ fn io_error(e: io::Error, fallback: i32, phase: &str) -> TransportError {
 
 pub fn perform(req: Request) -> Result<Response, TransportError> {
     let started = Instant::now();
-    let target = parse_https_url(req.url)
-        .ok_or_else(|| code(codes::INVALID_URL, format!("not an https url: {:?}", req.url)))?;
+    let target = parse_https_url(req.url).ok_or_else(|| {
+        code(
+            codes::INVALID_URL,
+            format!("not an https url: {:?}", req.url),
+        )
+    })?;
     let deadline = started
         .checked_add(req.budgets.total_deadline)
         .ok_or_else(|| code(codes::TIMEOUT, "invalid total deadline"))?;

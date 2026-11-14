@@ -40,9 +40,7 @@ pub fn build_config(extra_pem: Option<&[u8]>) -> Result<ClientConfig, TrustError
     // caller surfaces it as a handshake failure instead of a caught panic.
     let builder = ClientConfig::builder_with_provider(provider.into())
         .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
-        .map_err(|e| {
-            TrustError::ProtocolVersions(format!("protocol versions rejected: {e}"))
-        })?;
+        .map_err(|e| TrustError::ProtocolVersions(format!("protocol versions rejected: {e}")))?;
     let builder = match extra_pem {
         None => builder.with_root_certificates(base_roots().clone()),
         Some(pem) => {

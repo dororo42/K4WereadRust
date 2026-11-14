@@ -282,8 +282,8 @@ fn free_response_handles_null_out() {
 #[test]
 fn repeated_free_is_safe_noop() {
     let mut resp: K4TlsResponse = unsafe { std::mem::zeroed() };
-    let blob = Box::leak("headers\r\n\0".to_string().into_bytes().into_boxed_slice())
-        .as_mut_ptr() as *mut libc::c_char;
+    let blob = Box::leak("headers\r\n\0".to_string().into_bytes().into_boxed_slice()).as_mut_ptr()
+        as *mut libc::c_char;
     resp.headers_blob = blob;
     resp.header_count = 1;
     let body = Box::leak(vec![1u8, 2, 3].into_boxed_slice()).as_mut_ptr();
@@ -304,7 +304,7 @@ fn free_of_partially_cleared_response_does_not_double_free() {
     resp.body_len = 16;
     unsafe { k4tls::k4tls_free_response(&mut resp) };
     // simulate a crash-residue scenario: body dropped, header blob left set
-    resp.headers_blob = Box::leak("x\0".to_string().into_bytes().into_boxed_slice())
-        .as_mut_ptr() as *mut libc::c_char;
+    resp.headers_blob = Box::leak("x\0".to_string().into_bytes().into_boxed_slice()).as_mut_ptr()
+        as *mut libc::c_char;
     unsafe { k4tls::k4tls_free_response(&mut resp) };
 }

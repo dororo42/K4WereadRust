@@ -14,9 +14,7 @@ pub struct Target {
 pub fn parse_https_url(url: &str) -> Option<Target> {
     let rest = url.strip_prefix("https://")?;
     // authority 在第一个 / ? # 处结束；后两者同时决定 query/fragment 的归属。
-    let cut = rest
-        .find(['/', '?', '#'])
-        .unwrap_or(rest.len());
+    let cut = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..cut];
     let mut rest_path = &rest[cut..];
     if let Some(i) = rest_path.find('#') {
