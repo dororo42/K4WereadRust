@@ -53,13 +53,23 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/chunked":
             self.send_header("Transfer-Encoding", "chunked")
         else:
-            self.send_header("Content-Length", str(12 if self.path == "/drip" else len(body)))
+            self.send_header(
+                "Content-Length",
+                str(12 if self.path == "/drip" else 19 if self.path == "/slowchunk" else len(body)),
+            )
         self.end_headers()
         try:
             if self.command == "HEAD" or status == 304:
                 return
             if self.path == "/chunked":
                 self.wfile.write(b"7\r\n" + body + b"\r\n0\r\n\r\n")
+            elif self.path == "/slowchunk":
+                # Weak-network regression fixture: each gap exceeds the usual
+                # 2s block timeout, forcing an EAGAIN retry between pieces.
+                for piece in (b"slow-", b"chunk-", b"fix-", b"done"):
+                    self.wfile.write(piece)
+                    self.wfile.flush()
+                    time.sleep(2.5)
             elif self.path == "/drip":
                 for _ in range(12):
                     self.wfile.write(b"x")
