@@ -217,3 +217,10 @@
 - 工具三处同步（本仓）：`slim_manifest.json` keep_fonts + 注释教训③（净省 6.7M→5.9M）、`tools/k5_slim_deploy.sh` KEEP_FONTS、`tools/test_slim.py`（合成树源 + keep 断言各 +4）；`python3 -B tools/test_slim.py` **13/13 PASS**，`sh -n k5_slim_deploy.sh` 过。
 - 顺带核实 K5 暂回状态（AGENTS.md 已记载「11-12 因 segfault 归因 A/B 暂回 luasec」）：koreader.sh 08:02 起 `export WEREAD_TLS_BACKEND=luasec`，插件目录 `libk4tls.so`（1.19MB CI 产物）+ `k4tls.lua` 完好，仅激活开关关闭；今日 K5 会话在 LuaSec 下仍于 18:42 死于挂起空窗（插件仓判读：k4tls 非会话死亡变量，与 11/09 空壳先于 k4tls 的证据闭环）。
 - 边界：未 commit/push（工作区已有并行未提交批次，本批叠加待统一授权）；未动 Rust 代码；设备改动仅字体文件与缓存；K5 凭证/设置已在设备端备份（bak-20261112-19xx，内容零过境）。
+
+## 2026-11-13 · F-12 加固落地（FFI 边界统一防护，b171dff）
+
+- **为什么**：11-12 三仓审查报告 F-12 的三项建议中，version 已改静态字面量（消除 panic 路径），free_response 的 catch_unwind 与 tls.rs:36 的 .expect 改 Result 登记为「CI-verified batch」——本批即该批次。
+- **改了什么**：①`k4tls_free_response` 包 catch_unwind（畸形指针/长度组合降级 no-op，双释放防御不变）②`tls.rs` 新 variant `TrustError::ProtocolVersions(String)`，`build_config` 的 `.expect` 改 map_err（rustls 规则变化时不再 panic，错误进 out.err）③`transport.rs` caller match 补 variant ④`tests/ffi_tests.rs` 补 3 例 F-12 回归（repeated free / 部分清理 residue / free(null)）。
+- **如何验证**：cargo test 全绿（40 unit + 11 FFI，含 3 新用例）；cargo clippy --all-targets 0 告警；CI run `43573806467` success（host-gates/bench/so 三 job）。
+- **边界**：不加 Lua 侧改动（k4tls.lua 的 ffi.gc+显式 free 契约不变）；与 K5 segfault 无关（catch_unwind 防 panic 不防 SIGSEGV——segfault 归因仍在 KOReader/电源层）。
