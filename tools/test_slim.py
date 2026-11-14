@@ -40,6 +40,9 @@ def build_fake_tree(root):
                  "noto/NotoSansCJKsc-Regular.otf", "noto/NotoSans-Regular.ttf",
                  "noto/NotoSans-Bold.ttf", "noto/NotoSans-Italic.ttf",
                  "noto/NotoSans-BoldItalic.ttf", "noto/LICENSE",
+                 "noto/NotoSansBengaliUI-Bold.ttf", "noto/NotoSansBengaliUI-Regular.ttf",
+                 "noto/NotoSansDevanagariUI-Bold.ttf", "noto/NotoSansDevanagariUI-Regular.ttf",
+                 "noto/NotoSansArabicUI-Bold.ttf", "noto/NotoSansArabicUI-Regular.ttf",
                  "droid/DroidSansMono.ttf", "droid/NOTICE",
                  "nerdfonts/symbols.ttf", "nerdfonts/LICENSE", "README.md"):
         touch(f"fonts/{font}", 4096)
@@ -110,6 +113,9 @@ def main():
                      "texteditor.koplugin", "cloudstorage.koplugin"):
             assert not os.path.exists(os.path.join(dst, "plugins", gone)), f"excluded plugin leaked: {gone}"
         for keep in ("noto/NotoSansCJKsc-Regular.otf", "noto/NotoSans-Regular.ttf", "noto/LICENSE",
+                     "noto/NotoSansBengaliUI-Bold.ttf", "noto/NotoSansBengaliUI-Regular.ttf",
+                     "noto/NotoSansDevanagariUI-Bold.ttf", "noto/NotoSansDevanagariUI-Regular.ttf",
+                     "noto/NotoSansArabicUI-Bold.ttf", "noto/NotoSansArabicUI-Regular.ttf",
                      "droid/DroidSansMono.ttf", "nerdfonts/symbols.ttf", "freefont/FreeSans.ttf",
                      "freefont/FreeSerif.ttf", "freefont/COPYING", "README.md"):
             assert os.path.isfile(os.path.join(dst, "fonts", keep)), f"missing keep font {keep}"

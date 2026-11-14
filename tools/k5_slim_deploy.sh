@@ -12,7 +12,7 @@ LIST=/tmp/k5_slim_delete.txt
 LUAJIT_MD5=4b6d8f84f0a01b19a72ae04834cd6e50
 
 KEEP_PLUGINS="hotkeys.koplugin weread_K4.koplugin k4refresh.koplugin SSH.koplugin"
-KEEP_FONTS="noto/NotoSansCJKsc-Regular.otf noto/NotoSans-Regular.ttf noto/NotoSans-Bold.ttf noto/NotoSans-Italic.ttf noto/NotoSans-BoldItalic.ttf noto/LICENSE droid/DroidSansMono.ttf droid/NOTICE nerdfonts/symbols.ttf nerdfonts/LICENSE freefont/FreeSans.ttf freefont/FreeSerif.ttf freefont/COPYING README.md"
+KEEP_FONTS="noto/NotoSansCJKsc-Regular.otf noto/NotoSans-Regular.ttf noto/NotoSans-Bold.ttf noto/NotoSans-Italic.ttf noto/NotoSans-BoldItalic.ttf noto/NotoSansBengaliUI-Bold.ttf noto/NotoSansBengaliUI-Regular.ttf noto/NotoSansDevanagariUI-Bold.ttf noto/NotoSansDevanagariUI-Regular.ttf noto/NotoSansArabicUI-Bold.ttf noto/NotoSansArabicUI-Regular.ttf noto/LICENSE droid/DroidSansMono.ttf droid/NOTICE nerdfonts/symbols.ttf nerdfonts/LICENSE freefont/FreeSans.ttf freefont/FreeSerif.ttf freefont/COPYING README.md"
 
 # pgrep -f koreader 会命中 dropbear（argv[0]=/mnt/us/koreader/dropbear），必须按 comm 匹配
 koreader_running() {

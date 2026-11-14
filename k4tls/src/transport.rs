@@ -280,6 +280,9 @@ pub fn perform(req: Request) -> Result<Response, TransportError> {
         .map_err(|e| code(codes::HANDSHAKE_FAIL, format!("sni: {e}")))?;
     let config = tls::build_config(req.trust_pem).map_err(|e| match e {
         tls::TrustError::InvalidPem(m) => code(codes::HANDSHAKE_FAIL, format!("trust pem: {m}")),
+        tls::TrustError::ProtocolVersions(m) => {
+            code(codes::HANDSHAKE_FAIL, format!("protocol versions: {m}"))
+        }
     })?;
     let conn = rustls::ClientConnection::new(std::sync::Arc::new(config), server_name)
         .map_err(|e| code(codes::HANDSHAKE_FAIL, format!("conn: {e}")))?;

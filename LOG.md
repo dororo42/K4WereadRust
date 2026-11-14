@@ -209,3 +209,11 @@
 - **如何验证（本机源码级实跑）**：两个 Lua 绑定镜像 sha256 与插件仓逐字一致（`a4e1c5ed…` / `f0155311…`）；`python3 tools/check_lua_mirror.py --peer-repo` 通过，负向（改一字节）按预期 FAIL；`lua5.1 tools/test_k4tls_lua.lua` **69/69**（改前基线 67/67，新增 2）；`luac5.1 -p $(git ls-files '*.lua')` 全过；`sh -n k4tls/build.sh tools/k5_slim_deploy.sh` 通过；`python3 -B tools/test_slim.py` **13/13 PASS**；新增 Python 脚本 `ast.parse` 通过。`cargo fmt --check` 仍有 6 处历史差异（`http.rs` / `lib.rs` / `transport.rs` / `url.rs`），故 CI 中为非阻断观察步骤。
 - **未落实为代码改动的项**：F-12 的运行时加固（给 `k4tls_version` / `k4tls_free_response` 加 catch_unwind、把 `tls.rs` 的 `.expect` 换成 `Result`、补重复释放/空指针 FFI 用例）——按构建纪律本机不编译 Rust，无法确认，登记为需推送后由 CI 验证的单独批次；`k4tls_perform` 已有 catch_unwind 兜底，未观测到跨 FFI unwind 故障。F-11 的 fmt 硬门禁同理待全量格式化批次。
 - **边界**：未跑 `cargo test` / `clippy`、未编译 `.so`、未连真机、未访问远端 Release；三仓 handoff 套件同批生成（本地 only，不入库）。跨仓改动范围、依赖关系与同步顺序见各仓 HANDOFF.md「三仓协同」节及 `docs/RELEASE_ASSETS.md` §4。
+
+## 2026-11-12 19:25 — 字体裁剪第三轮回补（真书缺字）+ K5 暂回状态核实（未 commit）
+
+- 用户报告 K5 真书缺字：crash.log freetype 报错 `NotoSansDevanagariUI-Regular.ttf`/`NotoSansBengaliUI-Regular.ttf` 加载失败（slim 首版裁剪，前两轮 FreeSans/FreeSerif 教训的延续）。
+- 设备回补：从备份树 `koreader.pre-slim-20261108` 恢复 noto/NotoSansBengaliUI-{Bold,Regular}.ttf + NotoSansDevanagariUI-{Bold,Regular}.ttf 四文件（0.8M，md5 逐字对账一致），`cache/fontlist/fontinfo.dat` 已清（KOReader 下次启动生效）。阿拉伯文 4 文件（Naskh/ArabicUI）仍按 slim 口径裁剪、备份树可取。
+- 工具三处同步（本仓）：`slim_manifest.json` keep_fonts + 注释教训③（净省 6.7M→5.9M）、`tools/k5_slim_deploy.sh` KEEP_FONTS、`tools/test_slim.py`（合成树源 + keep 断言各 +4）；`python3 -B tools/test_slim.py` **13/13 PASS**，`sh -n k5_slim_deploy.sh` 过。
+- 顺带核实 K5 暂回状态（AGENTS.md 已记载「11-12 因 segfault 归因 A/B 暂回 luasec」）：koreader.sh 08:02 起 `export WEREAD_TLS_BACKEND=luasec`，插件目录 `libk4tls.so`（1.19MB CI 产物）+ `k4tls.lua` 完好，仅激活开关关闭；今日 K5 会话在 LuaSec 下仍于 18:42 死于挂起空窗（插件仓判读：k4tls 非会话死亡变量，与 11/09 空壳先于 k4tls 的证据闭环）。
+- 边界：未 commit/push（工作区已有并行未提交批次，本批叠加待统一授权）；未动 Rust 代码；设备改动仅字体文件与缓存；K5 凭证/设置已在设备端备份（bak-20261112-19xx，内容零过境）。

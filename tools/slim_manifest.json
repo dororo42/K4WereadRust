@@ -12,6 +12,12 @@
     "noto/NotoSans-Bold.ttf",
     "noto/NotoSans-Italic.ttf",
     "noto/NotoSans-BoldItalic.ttf",
+    "noto/NotoSansBengaliUI-Bold.ttf",
+    "noto/NotoSansBengaliUI-Regular.ttf",
+    "noto/NotoSansDevanagariUI-Bold.ttf",
+    "noto/NotoSansDevanagariUI-Regular.ttf",
+    "noto/NotoSansArabicUI-Bold.ttf",
+    "noto/NotoSansArabicUI-Regular.ttf",
     "noto/LICENSE",
     "droid/DroidSansMono.ttf",
     "droid/NOTICE",
@@ -22,5 +28,5 @@
     "freefont/COPYING",
     "README.md"
   ],
-  "keep_fonts_comment": "K5 树 25168KiB 字体中保留约 18400KiB（CJK 15.7M 占大头）；放弃 urw/NotoSerif/阿拉伯文/孟加拉文/天城文族 ≈ 省 6.8M。插件 4104KiB 保留约 1.5M ≈ 省 2.6M。2026-11-08 K5 实测部署两轮字形教训：①菜单 ▸/▼/→ 变方框——UI 回退链用 FreeSans 渲染几何符号（NotoSansCJKsc 无 U+25B8），恢复 freefont/FreeSans.ttf+COPYING（0.9M）；②菜单/页脚时间行 ⌚（及 ⏳/⊛/⤟/⤠/⤻/⥖）变方框——设备 FreeType 探针（FT_Get_Char_Index 全量矩阵）实证这些 Misc-Symbols/Supplemental-Arrows 区字形在 NotoSans/CJKsc/symbols.ttf/FreeSans 四面全无覆盖，FreeSerif 是上游回退链 [8] 的唯一提供者，恢复 freefont/FreeSerif.ttf（1.8M）。净省约 6.7M。"
+  "keep_fonts_comment": "K5 树 25168KiB 字体中保留约 18400KiB（CJK 15.7M 占大头）；放弃 urw/NotoSerif/阿拉伯文 Naskh 族，天城文/孟加拉文/阿拉伯文UI 2026-11-12 回补（教训③④）≈ 净省 5.5M。插件 4104KiB 保留约 1.5M ≈ 省 2.6M。2026-11-08 K5 实测部署两轮字形教训：①菜单 ▸/▼/→ 变方框——UI 回退链用 FreeSans 渲染几何符号（NotoSansCJKsc 无 U+25B8），恢复 freefont/FreeSans.ttf+COPYING（0.9M）；②菜单/页脚时间行 ⌚（及 ⏳/⊛/⤟/⤠/⤻/⥖）变方框——设备 FreeType 探针（FT_Get_Char_Index 全量矩阵）实证这些 Misc-Symbols/Supplemental-Arrows 区字形在 NotoSans/CJKsc/symbols.ttf/FreeSans 四面全无覆盖，FreeSerif 是上游回退链 [8] 的唯一提供者，恢复 freefont/FreeSerif.ttf（1.8M）；③2026-11-12 真书含天城文/孟加拉文（crash.log freetype 加载报错实证），从备份树恢复 noto/NotoSansDevanagariUI-*/NotoSansBengaliUI-* 四文件（0.8M，md5 对账一致）；④同日书 23303928 还引用 ArabicUI（crash.log 点名 NotoSansArabicUI-Bold/Regular），恢复两文件（0.36M，md5 对账一致；Naskh 未被点名未补）。"
 }

@@ -267,3 +267,44 @@ fn free_response_is_noop_safe() {
     unsafe { k4tls::k4tls_free_response(&mut resp) };
     unsafe { k4tls::k4tls_free_response(std::ptr::null_mut()) };
 }
+
+// 2026-11-13 (F-12 hardening): repeated free / null free / stale-residue
+// clearing must be safe no-ops. The pointers here are real Box allocations
+// (same shape k4tls_perform produces), freed through the public export.
+#[test]
+fn free_response_handles_null_out() {
+    unsafe { k4tls::k4tls_free_response(std::ptr::null_mut()) };
+}
+
+// 2026-11-13 (F-12 hardening): repeated free / partial-clear residue must be
+// safe no-ops. Pointers are real Box allocations in the same shape
+// k4tls_perform produces (blob_len counts through NUL, body_len is exact).
+#[test]
+fn repeated_free_is_safe_noop() {
+    let mut resp: K4TlsResponse = unsafe { std::mem::zeroed() };
+    let blob = Box::leak("headers\r\n\0".to_string().into_bytes().into_boxed_slice())
+        .as_mut_ptr() as *mut libc::c_char;
+    resp.headers_blob = blob;
+    resp.header_count = 1;
+    let body = Box::leak(vec![1u8, 2, 3].into_boxed_slice()).as_mut_ptr();
+    resp.body = body;
+    resp.body_len = 3;
+    unsafe { k4tls::k4tls_free_response(&mut resp) };
+    assert!(resp.headers_blob.is_null());
+    assert!(resp.body.is_null());
+    // second free: every pointer was nulled -> skips both drops, no UB
+    unsafe { k4tls::k4tls_free_response(&mut resp) };
+}
+
+#[test]
+fn free_of_partially_cleared_response_does_not_double_free() {
+    let mut resp: K4TlsResponse = unsafe { std::mem::zeroed() };
+    let body = Box::leak(vec![7u8; 16].into_boxed_slice()).as_mut_ptr();
+    resp.body = body;
+    resp.body_len = 16;
+    unsafe { k4tls::k4tls_free_response(&mut resp) };
+    // simulate a crash-residue scenario: body dropped, header blob left set
+    resp.headers_blob = Box::leak("x\0".to_string().into_bytes().into_boxed_slice())
+        .as_mut_ptr() as *mut libc::c_char;
+    unsafe { k4tls::k4tls_free_response(&mut resp) };
+}

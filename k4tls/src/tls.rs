@@ -22,6 +22,10 @@ fn base_roots() -> &'static RootCertStore {
 
 pub enum TrustError {
     InvalidPem(String),
+    /// 2026-11-12 (F-12): the hard-coded TLS13/TLS12 list makes this
+    /// unreachable today; carrying it as a variant keeps the promise that
+    /// `build_config` never panics even if rustls changes its rules.
+    ProtocolVersions(String),
 }
 
 pub fn build_config(extra_pem: Option<&[u8]>) -> Result<ClientConfig, TrustError> {
@@ -31,9 +35,14 @@ pub fn build_config(extra_pem: Option<&[u8]>) -> Result<ClientConfig, TrustError
     // return TrustError instead. No local Rust builds are allowed by project
     // discipline, so that change needs CI verification before landing.
     let provider = rustls::crypto::ring::default_provider();
+    // 2026-11-13 (F-12 hardening): the expect below was the last panic path
+    // reachable from k4tls_perform; build_config now returns Result and the
+    // caller surfaces it as a handshake failure instead of a caught panic.
     let builder = ClientConfig::builder_with_provider(provider.into())
         .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
-        .expect("protocol versions valid");
+        .map_err(|e| {
+            TrustError::ProtocolVersions(format!("protocol versions rejected: {e}"))
+        })?;
     let builder = match extra_pem {
         None => builder.with_root_certificates(base_roots().clone()),
         Some(pem) => {
