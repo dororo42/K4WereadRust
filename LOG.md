@@ -234,3 +234,11 @@
 - **部署**：K5 `/mnt/us/koreader/plugins/weread_K4.koplugin/weread/lib/libk4tls.so` = CI 产物 md5 `fcc3f850`（旧版备份 `.bak-20261114`，mv 原子替换未 truncate 已映射文件）；FFI 冒烟 `k4tls 0.1.0 rustls-0.23/ring` 通过；设备测试残留已清（脚本/CA/rwfs k4tls-check 旧目录）。**K4（192.168.2.140:2222）连接拒绝离线，待上线后同法部署**（scp tmp+mv，md5 fcc3f850）。
 - **fixture 入库**：`tls_fixture.py` 增 `/slowchunk` 路由（02c1601）——自签 CA→CA 签发服务证书链（rustls 拒绝 CaUsedAsEndEntity，裸自签证书不能当信任锚——复测时注意）。
 - **边界**：Lua 侧零改动；不修复 SIGSEGV（K5 segfault 归因仍在 KOReader/电源层，catch_unwind 防 panic 不防 segfault）；不发版不打 tag（v0.1.0 组件无独立发版通道，.so 经插件仓 Release 分发——v9.13 发版时将携带本修复的 .so）。
+
+## 2026-11-14 18:40 — K4 上线补部署（弱网修复 .so，md5 对账 + 真机 /slowchunk 实证）
+
+- K4 实际地址漂移至 `192.168.2.151:2222`（DHCP，handoff 记录的 140 已失效；MX50 + FW 4.1.4 yoshi 确认身份）。KOReader 运行中（2 luajit reader.lua）。
+- 部署：旧 .so（md5 `8b89393a` = 11-12 批次旧产物，含 EAGAIN 缺陷）备份为 `.bak-20261114` → CI 产物（`fcc3f850`）scp /tmp → mv 原子替换 → md5 对账通过。
+- 验证：FFI 冒烟 `k4tls 0.1.0 rustls-0.23/ring` 通过；**真机 `/slowchunk`（4 片×2.5s 间隔 > block 2s）7645ms、HTTP 200、body `slow-chunk-fix-done` 19 字节完整**——修复版在 EAGAIN 风暴原始受害设备上弱网重试实证成功（K4 真机日志 11-12/14 即旧版失败的现场证据，不再回装旧版做 A/B）。
+- 后端开关核实：K4 `koreader.sh` 无 `WEREAD_TLS_BACKEND` 注入、KOReader 全局 settings 无 `tls_backend` 键 → 当前默认 LuaSec。**不代开**：k4tls 激活留用户菜单勾选（菜单三增强已部署），勾选后才走新 .so。
+- 边界：测试残留已清（脚本/CA）；未动 Lua/设置；K5 segfault A/B 与互踢观察不受影响。
