@@ -32,7 +32,7 @@ K4weread Phase 1 工程仓（评估报告 §七 分期）：**无 fork 的 Rust 
 ## Current Handoff
 
 - Latest: `handoffs/2026-11-14-180409-k4wereadrust-weak-network-fix/HANDOFF.md`
-- Branch: main @ 76636f3
+- Branch: main @ 101efc5
 - Status: 修复批次完成（弱网重试修复已推+CI绿+K5已部署实证+K4待部署；下一步见 HANDOFF「立即下一步」）
 
 任何 agent 开始工作前，先读上面的 HANDOFF.md。这份指针由 orbital_handoff 维护，手工交接时请同步更新。
