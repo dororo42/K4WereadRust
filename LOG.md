@@ -224,3 +224,13 @@
 - **改了什么**：①`k4tls_free_response` 包 catch_unwind（畸形指针/长度组合降级 no-op，双释放防御不变）②`tls.rs` 新 variant `TrustError::ProtocolVersions(String)`，`build_config` 的 `.expect` 改 map_err（rustls 规则变化时不再 panic，错误进 out.err）③`transport.rs` caller match 补 variant ④`tests/ffi_tests.rs` 补 3 例 F-12 回归（repeated free / 部分清理 residue / free(null)）。
 - **如何验证**：cargo test 全绿（40 unit + 11 FFI，含 3 新用例）；cargo clippy --all-targets 0 告警；CI run `43573806467` success（host-gates/bench/so 三 job）。
 - **边界**：不加 Lua 侧改动（k4tls.lua 的 ffi.gc+显式 free 契约不变）；与 K5 segfault 无关（catch_unwind 防 panic 不防 SIGSEGV——segfault 归因仍在 KOReader/电源层）。
+
+## 2026-11-14 · 弱网超时重试修复（DeadlineStream EAGAIN 风暴，265f427+02c1601）
+
+- **背景**：11-12/14 K4 崩溃循环期间弱网日志出现 `os error 11`（EAGAIN）风暴；定位为 2.6 世代内核 SO_RCVTIMEO 超时返回 EAGAIN 而非 ETIMEDOUT，`DeadlineStream.read/write/flush` 无重试循环，每次慢读直接中止整个请求。
+- **修复**：`retry_on_timeout` 闭包循环——超时类错误（WouldBlock/TimedOut/EAGAIN/EWOULDBLOCK）在 total deadline 内持续重试，deadline 过期才上抛 TIMEOUT；deadline 语义不变（每 socket 操作预算 block、整请求硬期限 total）。
+- **测试**：cargo test **69/69**（40 unit + 11 FFI + 18 transport）；新增 slow_chunked 用例（TLS 后 4 片响应按 2.5s 间隔慢发 > block 2s，验证重试直至完成）；stalled-body 用例断言随新语义更新（deadline 内等满而非 100ms 快速放弃）；hold server 修复（读空后不再 close——close 会以 EOF/HANDSHAKE_FAIL 呈现导致客户端永远到不了自身 deadline）；clippy --all-targets 0 告警；cargo fmt 全仓收尾（http/lib/tls/url/ffi_tests 行宽）。CI run `43582621298` 全绿。
+- **真机 A/B 实证（K5，独立进程 -joff，SSH -R 隧道接 PC tls_fixture）**：新增 `/slowchunk` 路由（Content-Length:19 分 4 片、片间隔 2.5s，每次必触发 block 超时）——**旧 .so**：`read: Resource temporarily unavailable (os error 11)`，2055ms 中止（EAGAIN 风暴原样复现，与 K4 日志同款错误，旁证 2.6 世代内核行为一致）；**新 .so**：7645ms、HTTP 200、body `slow-chunk-fix-done` 19 字节完整——重试穿过 3×2.5s 分片间隔，耗时数学吻合（3×2500ms+握手）。
+- **部署**：K5 `/mnt/us/koreader/plugins/weread_K4.koplugin/weread/lib/libk4tls.so` = CI 产物 md5 `fcc3f850`（旧版备份 `.bak-20261114`，mv 原子替换未 truncate 已映射文件）；FFI 冒烟 `k4tls 0.1.0 rustls-0.23/ring` 通过；设备测试残留已清（脚本/CA/rwfs k4tls-check 旧目录）。**K4（192.168.2.140:2222）连接拒绝离线，待上线后同法部署**（scp tmp+mv，md5 fcc3f850）。
+- **fixture 入库**：`tls_fixture.py` 增 `/slowchunk` 路由（02c1601）——自签 CA→CA 签发服务证书链（rustls 拒绝 CaUsedAsEndEntity，裸自签证书不能当信任锚——复测时注意）。
+- **边界**：Lua 侧零改动；不修复 SIGSEGV（K5 segfault 归因仍在 KOReader/电源层，catch_unwind 防 panic 不防 segfault）；不发版不打 tag（v0.1.0 组件无独立发版通道，.so 经插件仓 Release 分发——v9.13 发版时将携带本修复的 .so）。
