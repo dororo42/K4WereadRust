@@ -31,8 +31,8 @@ K4weread Phase 1 工程仓（评估报告 §七 分期）：**无 fork 的 Rust 
 
 ## Current Handoff
 
-- Latest: `handoffs/2026-11-12-135008-k4wereadrust-three-repo-audit-fix/HANDOFF.md`
-- Branch: main @ 32f093e
-- Status: **三仓审查复核意见落地（2026-11-12）**：Lua 镜像逐字节对齐插件仓（新增 `tools/check_lua_mirror.py`）、CI 补 PR/权限/checkout pin/镜像门禁、`docs/RELEASE_ASSETS.md` 建立资产与兼容矩阵；21 项逐条确认见 HANDOFF.md「三仓协同」§4。Rust 运行时仅补注释；fmt 硬门禁与 FFI 加固留待 CI 验证批次。修复**未 commit / push**（待授权），未构建、未发版、未连真机。
+- Latest: `handoffs/2026-11-14-180409-k4wereadrust-weak-network-fix/HANDOFF.md`
+- Branch: main @ 76636f3
+- Status: 修复批次完成（弱网重试修复已推+CI绿+K5已部署实证+K4待部署；下一步见 HANDOFF「立即下一步」）
 
 任何 agent 开始工作前，先读上面的 HANDOFF.md。这份指针由 orbital_handoff 维护，手工交接时请同步更新。
